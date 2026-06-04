@@ -7,6 +7,7 @@ class TrayApp : IDisposable
 {
     Config _config;
     bool _slackStatusSet;
+    SlackClient.SlackStatus? _previousStatus;
 
     readonly NotifyIcon _tray;
     readonly AudioMonitor _monitor;
@@ -153,11 +154,13 @@ class TrayApp : IDisposable
         if (string.IsNullOrEmpty(_config.SlackToken)) return;
         try
         {
+            _previousStatus = await SlackClient.GetStatusAsync(_config.SlackToken);
             await SlackClient.SetStatusAsync(_config.SlackToken, _config.StatusText, _config.StatusEmoji);
             _slackStatusSet = true;
         }
         catch (Exception ex)
         {
+            _previousStatus = null;
             _tray.ShowBalloonTip(5_000, "Sleams — Slack error", ex.Message, ToolTipIcon.Error);
         }
     }
@@ -165,9 +168,28 @@ class TrayApp : IDisposable
     async Task ClearSlackStatusAsync()
     {
         if (string.IsNullOrEmpty(_config.SlackToken)) return;
-        try   { await SlackClient.ClearStatusAsync(_config.SlackToken); }
+        try
+        {
+            var prev = _previousStatus;
+
+            // If the previous status matches what Sleams set (race condition / desync),
+            // treat it as empty so we don't re-apply a stale Sleams status.
+            var restoreText  = prev?.Text  ?? "";
+            var restoreEmoji = prev?.Emoji ?? "";
+            if (restoreText == _config.StatusText && restoreEmoji == _config.StatusEmoji)
+            {
+                restoreText  = "";
+                restoreEmoji = "";
+            }
+
+            await SlackClient.SetStatusAsync(_config.SlackToken, restoreText, restoreEmoji);
+        }
         catch { /* best-effort */ }
-        finally { _slackStatusSet = false; }
+        finally
+        {
+            _slackStatusSet = false;
+            _previousStatus = null;
+        }
     }
 
     // ── UI refresh ────────────────────────────────────────────────────────────

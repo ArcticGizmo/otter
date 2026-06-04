@@ -14,6 +14,34 @@ static class SlackClient
 
     // ── Status ────────────────────────────────────────────────────────────────
 
+    public record SlackStatus(string Text, string Emoji);
+
+    public static async Task<SlackStatus> GetStatusAsync(string token)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "https://slack.com/api/users.profile.get")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) }
+        };
+        var resp = await Http.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+        {
+            var error = root.TryGetProperty("error", out var errProp) ? errProp.GetString() : "unknown";
+            throw new InvalidOperationException($"Slack API error: {error}");
+        }
+
+        if (!root.TryGetProperty("profile", out var profile))
+            return new SlackStatus("", "");
+
+        var text  = profile.TryGetProperty("status_text",  out var t) ? t.GetString() ?? "" : "";
+        var emoji = profile.TryGetProperty("status_emoji", out var e) ? e.GetString() ?? "" : "";
+        return new SlackStatus(text, emoji);
+    }
+
     public static async Task SetStatusAsync(string token, string text, string emoji)
     {
         var body = JsonSerializer.Serialize(new
@@ -50,7 +78,7 @@ static class SlackClient
 
         var authUrl = "https://slack.com/oauth/v2/authorize"
             + $"?client_id={Uri.EscapeDataString(clientId)}"
-            + "&user_scope=users.profile%3Awrite"
+            + "&user_scope=users.profile%3Awrite%2Cusers.profile%3Aread"
             + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
             + $"&state={state}";
 
