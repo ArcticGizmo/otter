@@ -76,7 +76,10 @@ static class SlackClient
             throw new TimeoutException("Slack OAuth timed out — the browser was not completed in time.");
         }
 
-        // Respond to browser before stopping the listener
+        // Capture query string before stopping the listener (Stop() disposes the request)
+        var qs = context.Request.QueryString;
+
+        // Respond to browser, then stop
         try
         {
             var html = Encoding.UTF8.GetBytes(
@@ -89,8 +92,6 @@ static class SlackClient
         }
         catch { /* browser closed before we could respond — non-fatal */ }
         finally { listener.Stop(); }
-
-        var qs = context.Request.QueryString;
 
         if (qs["error"] is string err)
             throw new InvalidOperationException($"Slack returned an error: {err}");
