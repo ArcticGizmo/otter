@@ -14,7 +14,8 @@ static class SlackClient
 
     // ── Status ────────────────────────────────────────────────────────────────
 
-    public record SlackStatus(string Text, string Emoji);
+    // Expiration is a Unix timestamp (seconds); 0 means no expiry.
+    public record SlackStatus(string Text, string Emoji, long Expiration = 0);
 
     public static async Task<SlackStatus> GetStatusAsync(string token)
     {
@@ -37,16 +38,22 @@ static class SlackClient
         if (!root.TryGetProperty("profile", out var profile))
             return new SlackStatus("", "");
 
-        var text  = profile.TryGetProperty("status_text",  out var t) ? t.GetString() ?? "" : "";
-        var emoji = profile.TryGetProperty("status_emoji", out var e) ? e.GetString() ?? "" : "";
-        return new SlackStatus(text, emoji);
+        var text  = profile.TryGetProperty("status_text",       out var t) ? t.GetString() ?? ""  : "";
+        var emoji = profile.TryGetProperty("status_emoji",      out var e) ? e.GetString() ?? ""  : "";
+        var exp   = profile.TryGetProperty("status_expiration", out var x) ? x.GetInt64()         : 0L;
+
+        // If the expiry has already passed, treat it as no expiry so we don't restore a stale status
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (exp > 0 && exp <= now) exp = 0;
+
+        return new SlackStatus(text, emoji, exp);
     }
 
-    public static async Task SetStatusAsync(string token, string text, string emoji)
+    public static async Task SetStatusAsync(string token, string text, string emoji, long expiration = 0)
     {
         var body = JsonSerializer.Serialize(new
         {
-            profile = new { status_text = text, status_emoji = emoji, status_expiration = 0 }
+            profile = new { status_text = text, status_emoji = emoji, status_expiration = expiration }
         });
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "https://slack.com/api/users.profile.set")

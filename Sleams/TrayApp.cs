@@ -174,15 +174,17 @@ class TrayApp : IDisposable
 
             // If the previous status matches what Sleams set (race condition / desync),
             // treat it as empty so we don't re-apply a stale Sleams status.
-            var restoreText  = prev?.Text  ?? "";
-            var restoreEmoji = prev?.Emoji ?? "";
+            var restoreText  = prev?.Text       ?? "";
+            var restoreEmoji = prev?.Emoji      ?? "";
+            var restoreExp   = prev?.Expiration ?? 0;
             if (restoreText == _config.StatusText && restoreEmoji == _config.StatusEmoji)
             {
                 restoreText  = "";
                 restoreEmoji = "";
+                restoreExp   = 0;
             }
 
-            await SlackClient.SetStatusAsync(_config.SlackToken, restoreText, restoreEmoji);
+            await SlackClient.SetStatusAsync(_config.SlackToken, restoreText, restoreEmoji, restoreExp);
         }
         catch { /* best-effort */ }
         finally
