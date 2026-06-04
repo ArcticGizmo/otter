@@ -177,11 +177,19 @@ class TrayApp : IDisposable
             var restoreText  = prev?.Text       ?? "";
             var restoreEmoji = prev?.Emoji      ?? "";
             var restoreExp   = prev?.Expiration ?? 0;
+            
             if (restoreText == _config.StatusText && restoreEmoji == _config.StatusEmoji)
             {
-                restoreText  = "";
-                restoreEmoji = "";
-                restoreExp   = 0;
+                await SlackClient.ClearStatusAsync(_config.SlackToken);
+                return;                
+            }
+            
+            // If expiration has passed, clear status
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (restoreExp > 0 && restoreExp <= now)
+            {
+                await SlackClient.ClearStatusAsync(_config.SlackToken);
+                return;
             }
 
             await SlackClient.SetStatusAsync(_config.SlackToken, restoreText, restoreEmoji, restoreExp);
