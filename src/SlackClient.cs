@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
@@ -75,19 +76,27 @@ static class SlackClient
 
     /// <summary>
     /// Opens the browser to Slack's auth page, waits for the local redirect,
-    /// exchanges the code, and returns (userToken, teamName).
+    /// exchanges the code via PKCE (no client secret required), and returns (userToken, teamName).
     /// </summary>
     public static async Task<(string Token, string TeamName)> RunOAuthFlowAsync(
-        string clientId, string clientSecret, CancellationToken ct = default)
+        string clientId, CancellationToken ct = default)
     {
         var state = Guid.NewGuid().ToString("N");
         var redirectUri = $"http://localhost:{OAuthPort}/callback";
+
+        // PKCE: generate verifier + challenge so no client secret is needed
+        var verifierBytes = new byte[32];
+        RandomNumberGenerator.Fill(verifierBytes);
+        var codeVerifier  = Base64UrlEncode(verifierBytes);
+        var codeChallenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
 
         var authUrl = "https://slack.com/oauth/v2/authorize"
             + $"?client_id={Uri.EscapeDataString(clientId)}"
             + "&user_scope=users.profile%3Awrite%2Cusers.profile%3Aread"
             + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
-            + $"&state={state}";
+            + $"&state={state}"
+            + $"&code_challenge={codeChallenge}"
+            + "&code_challenge_method=S256";
 
         using var listener = new HttpListener();
         listener.Prefixes.Add($"http://localhost:{OAuthPort}/");
@@ -136,15 +145,15 @@ static class SlackClient
 
         var code = qs["code"] ?? throw new InvalidOperationException("No code in OAuth callback.");
 
-        // Exchange code → token
+        // Exchange code → token using PKCE verifier instead of client secret
         var tokenResp = await Http.PostAsync(
             "https://slack.com/api/oauth.v2.access",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["client_id"]     = clientId,
-                ["client_secret"] = clientSecret,
                 ["code"]          = code,
                 ["redirect_uri"]  = redirectUri,
+                ["code_verifier"] = codeVerifier,
             }));
 
         await EnsureSlackOkAsync(tokenResp);
@@ -158,6 +167,9 @@ static class SlackClient
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    static string Base64UrlEncode(byte[] data) =>
+        Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     static async Task EnsureSlackOkAsync(HttpResponseMessage resp)
     {

@@ -5,10 +5,9 @@ namespace Sleams;
 
 class Config
 {
-    public string SlackToken      { get; set; } = "";
-    public string SlackTeamName   { get; set; } = "";
-    public string SlackClientId   { get; set; } = "";
-    public string SlackClientSecret { get; set; } = "";
+    public string SlackToken    { get; set; } = "";
+    public string SlackTeamName { get; set; } = "";
+    public string SlackClientId { get; set; } = "";
     public string StatusText      { get; set; } = "In a Teams call";
     public string StatusEmoji     { get; set; } = ":headphones:";
     public bool   Enabled         { get; set; } = true;
@@ -41,13 +40,12 @@ class Config
 
     public Config Clone() => new()
     {
-        SlackToken       = SlackToken,
-        SlackTeamName    = SlackTeamName,
-        SlackClientId    = SlackClientId,
-        SlackClientSecret = SlackClientSecret,
-        StatusText       = StatusText,
-        StatusEmoji      = StatusEmoji,
-        Enabled          = Enabled,
-        SnoozedUntil     = SnoozedUntil,
+        SlackToken    = SlackToken,
+        SlackTeamName = SlackTeamName,
+        SlackClientId = SlackClientId,
+        StatusText    = StatusText,
+        StatusEmoji   = StatusEmoji,
+        Enabled       = Enabled,
+        SnoozedUntil  = SnoozedUntil,
     };
 }
