@@ -39,9 +39,15 @@ class SettingsWindow : Form
     Spinner _connSpinner   = null!;
 
     // Status page.
-    TextBox _statusTextBox = null!;
-    TextBox _emojiBox      = null!;
-    Label   _statusPreview = null!;
+    TextBox    _statusTextBox = null!;
+    TextBox    _emojiBox      = null!;
+    Label      _statusPreview = null!;
+    PictureBox _previewEmoji  = null!;
+
+    // Workspace custom-emoji catalogue (list + cached thumbnails), shared by the emoji autocomplete
+    // and the status preview.
+    readonly EmojiStore _emojiStore = new();
+    EmojiAutocomplete? _emojiAutocomplete;
 
     // Getting started echoes the same connection line.
     Label _startConn = null!;
@@ -77,6 +83,12 @@ class SettingsWindow : Form
         BuildLayout();
         UpdateConnectionUI();
         UpdateStatusPreview();
+
+        // A late-arriving thumbnail (or a completed catalogue refresh) should refresh the preview.
+        _emojiStore.Updated += () =>
+        {
+            if (IsHandleCreated) BeginInvoke(UpdateStatusPreview);
+        };
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -96,6 +108,11 @@ class SettingsWindow : Form
         foreach (var page in _pages.Values)
             NativeMethods.UseDarkScrollBars(page.Handle);
         _fluid.Apply();
+
+        // Pull the latest workspace emoji in the background; the disk cache already backs autocomplete
+        // until this lands. Fire-and-forget — RefreshAsync swallows offline/missing-scope failures.
+        if (!string.IsNullOrEmpty(_config.SlackToken))
+            _ = _emojiStore.RefreshAsync(_config.SlackToken);
     }
 
     // ── Shell ─────────────────────────────────────────────────────────────────────
@@ -363,22 +380,44 @@ class SettingsWindow : Form
             _config.StatusEmoji = emoji;
             Commit();
         };
+        // Slack-style autocomplete: type ':' + a name to pick from the workspace's custom emoji.
+        _emojiAutocomplete = new EmojiAutocomplete(_emojiBox, _emojiStore);
         page.Controls.Add(_emojiBox);
-        page.Controls.Add(Ui.FieldCaption("e.g. :headphones:"));
+        page.Controls.Add(Ui.FieldCaption("Type ':' to search your workspace emoji — e.g. :headphones:"));
 
         page.Controls.Add(Ui.Separator(_fluid));
 
         page.Controls.Add(Ui.FieldCaption("Preview"));
+        // The preview is a thumbnail (for custom emoji we can render) followed by the status line.
+        var previewRow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents  = false,
+            AutoSize      = true,
+            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
+            BackColor     = Theme.CodeBg,
+            Padding       = new Padding(10, 7, 12, 7),
+            Margin        = new Padding(0, 0, 0, 8),
+        };
+        _previewEmoji = new PictureBox
+        {
+            Size     = new Size(20, 20),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Margin   = new Padding(0, 0, 6, 0),
+            Visible  = false,
+        };
         _statusPreview = new Label
         {
             AutoSize  = true,
             ForeColor = Theme.Fg,
             BackColor = Theme.CodeBg,
-            Padding   = new Padding(10, 7, 12, 7),
             Font      = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
-            Margin    = new Padding(0, 0, 0, 8),
+            Margin    = new Padding(0),
+            Padding   = new Padding(0, 2, 0, 0),
         };
-        page.Controls.Add(_statusPreview);
+        previewRow.Controls.Add(_previewEmoji);
+        previewRow.Controls.Add(_statusPreview);
+        page.Controls.Add(previewRow);
     }
 
     void UpdateStatusPreview()
@@ -386,9 +425,22 @@ class SettingsWindow : Form
         if (_statusPreview is null) return;
         var emoji = _emojiBox.Text.Trim();
         var text  = _statusTextBox.Text.Trim();
-        _statusPreview.Text = string.IsNullOrEmpty(emoji) && string.IsNullOrEmpty(text)
-            ? "(no status)"
-            : $"{emoji}  {text}".Trim();
+
+        // If the emoji resolves to a workspace custom emoji we have (or can fetch) an image for, show
+        // the thumbnail and drop the raw :code: from the text; otherwise fall back to the literal code.
+        Image? img = string.IsNullOrEmpty(emoji) ? null : _emojiStore.GetImageCached(emoji);
+        if (_previewEmoji is not null)
+        {
+            _previewEmoji.Image   = img;
+            _previewEmoji.Visible = img is not null;
+        }
+
+        if (string.IsNullOrEmpty(emoji) && string.IsNullOrEmpty(text))
+            _statusPreview.Text = "(no status)";
+        else if (img is not null)
+            _statusPreview.Text = text.Length > 0 ? text : "(no status text)";
+        else
+            _statusPreview.Text = $"{emoji}  {text}".Trim();
     }
 
     // ── Notifications ───────────────────────────────────────────────────────────────
@@ -571,6 +623,10 @@ class SettingsWindow : Form
             _config.SlackTeamName = teamName;
             _config.SlackClientId = clientId;
             Commit();
+
+            // The new token now carries emoji:read — pull the workspace emoji straight away so
+            // autocomplete works without waiting for the next time Settings is reopened.
+            _ = _emojiStore.RefreshAsync(token);
         }
         catch (Exception ex)
         {
@@ -595,7 +651,12 @@ class SettingsWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _icon?.Dispose();
+        if (disposing)
+        {
+            _icon?.Dispose();
+            _emojiAutocomplete?.Dispose();
+            _emojiStore.Dispose();
+        }
         base.Dispose(disposing);
     }
 }

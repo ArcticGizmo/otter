@@ -72,6 +72,61 @@ static class SlackClient
     public static Task ClearStatusAsync(string token) =>
         SetStatusAsync(token, string.Empty, string.Empty);
 
+    // ── Emoji ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fetches the workspace's custom emoji via the <c>emoji.list</c> method (requires the
+    /// <c>emoji:read</c> scope). Returns a map of emoji name (no colons) → image URL. Built-in
+    /// standard emoji aren't returned by Slack; only custom uploads are. Aliases (values of the
+    /// form <c>alias:other</c>) are followed to the underlying image, and any that resolve to a
+    /// standard emoji (no URL) are dropped.
+    /// </summary>
+    public static async Task<Dictionary<string, string>> GetEmojiListAsync(string token)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "https://slack.com/api/emoji.list")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) }
+        };
+        var resp = await Http.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+        {
+            var error = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown";
+            throw new InvalidOperationException($"Slack API error: {error}");
+        }
+
+        var raw = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (root.TryGetProperty("emoji", out var emoji) && emoji.ValueKind == JsonValueKind.Object)
+            foreach (var p in emoji.EnumerateObject())
+                raw[p.Name] = p.Value.GetString() ?? "";
+
+        // Resolve alias chains down to a real image URL; drop anything that doesn't end at one.
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in raw.Keys)
+        {
+            var url = ResolveEmoji(raw, name, 0);
+            if (url is not null && url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                result[name] = url;
+        }
+        return result;
+    }
+
+    // Follows alias: references to the underlying value. Returns null on a missing target,
+    // a standard-emoji alias (no URL), or a suspiciously deep chain.
+    static string? ResolveEmoji(Dictionary<string, string> map, string name, int depth)
+    {
+        if (depth > 10) return null;
+        if (!map.TryGetValue(name, out var value)) return null;
+        const string aliasPrefix = "alias:";
+        return value.StartsWith(aliasPrefix, StringComparison.Ordinal)
+            ? ResolveEmoji(map, value[aliasPrefix.Length..], depth + 1)
+            : value;
+    }
+
     // ── OAuth ─────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -92,7 +147,7 @@ static class SlackClient
 
         var authUrl = "https://slack.com/oauth/v2/authorize"
             + $"?client_id={Uri.EscapeDataString(clientId)}"
-            + "&user_scope=users.profile%3Awrite%2Cusers.profile%3Aread"
+            + "&user_scope=users.profile%3Awrite%2Cusers.profile%3Aread%2Cemoji%3Aread"
             + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
             + $"&state={state}"
             + $"&code_challenge={codeChallenge}"
