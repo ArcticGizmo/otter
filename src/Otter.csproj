@@ -5,8 +5,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Sleams</AssemblyName>
-    <RootNamespace>Sleams</RootNamespace>
+    <AssemblyName>Otter</AssemblyName>
+    <RootNamespace>Otter</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 </Project>

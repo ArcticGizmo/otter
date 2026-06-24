@@ -1,14 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Sleams;
+namespace Otter;
 
 class Config
 {
-    public string SlackToken      { get; set; } = "";
-    public string SlackTeamName   { get; set; } = "";
-    public string SlackClientId   { get; set; } = "";
-    public string SlackClientSecret { get; set; } = "";
+    public string SlackToken    { get; set; } = "";
+    public string SlackTeamName { get; set; } = "";
+    public string SlackClientId { get; set; } = "";
     public string StatusText      { get; set; } = "In a Teams call";
     public string StatusEmoji     { get; set; } = ":headphones:";
     public bool   Enabled         { get; set; } = true;
@@ -18,7 +17,7 @@ class Config
 
     [JsonIgnore]
     static readonly string ConfigDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sleams");
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Otter");
 
     [JsonIgnore]
     static readonly string ConfigPath = Path.Combine(ConfigDir, "config.json");
@@ -41,13 +40,12 @@ class Config
 
     public Config Clone() => new()
     {
-        SlackToken       = SlackToken,
-        SlackTeamName    = SlackTeamName,
-        SlackClientId    = SlackClientId,
-        SlackClientSecret = SlackClientSecret,
-        StatusText       = StatusText,
-        StatusEmoji      = StatusEmoji,
-        Enabled          = Enabled,
-        SnoozedUntil     = SnoozedUntil,
+        SlackToken    = SlackToken,
+        SlackTeamName = SlackTeamName,
+        SlackClientId = SlackClientId,
+        StatusText    = StatusText,
+        StatusEmoji   = StatusEmoji,
+        Enabled       = Enabled,
+        SnoozedUntil  = SnoozedUntil,
     };
 }

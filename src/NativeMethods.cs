@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Sleams;
+namespace Otter;
 
 /// <summary>
 /// Queries Windows Audio Session API (WASAPI) for processes with active

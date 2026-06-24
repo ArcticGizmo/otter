@@ -1,6 +1,6 @@
 using System.Windows.Forms;
 
-namespace Sleams;
+namespace Otter;
 
 static class Program
 {
@@ -12,11 +12,11 @@ static class Program
         ApplicationConfiguration.Initialize();
 
         // Ensure only one instance runs at a time
-        using var mutex = new System.Threading.Mutex(true, "Sleams_SingleInstance", out var isNew);
+        using var mutex = new System.Threading.Mutex(true, "Otter_SingleInstance", out var isNew);
         if (!isNew)
         {
-            MessageBox.Show("Sleams is already running.\nLook for the icon in the system tray.",
-                "Sleams", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("Otter is already running.\nLook for the icon in the system tray.",
+                "Otter", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 

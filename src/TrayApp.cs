@@ -1,7 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
-namespace Sleams;
+namespace Otter;
 
 class TrayApp : IDisposable
 {
@@ -58,7 +58,7 @@ class TrayApp : IDisposable
 
         _tray = new NotifyIcon
         {
-            Text             = "Sleams",
+            Text             = "Otter",
             ContextMenuStrip = menu,
             Visible          = true,
         };
@@ -84,7 +84,7 @@ class TrayApp : IDisposable
         {
             if (!IsActive) return;
             _ = SetSlackStatusAsync();
-            _tray.ShowBalloonTip(3_000, "Sleams", "Teams call detected — updating Slack status.", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(3_000, "Otter", "Teams call detected — updating Slack status.", ToolTipIcon.Info);
             RefreshUI();
         });
     }
@@ -161,7 +161,7 @@ class TrayApp : IDisposable
         catch (Exception ex)
         {
             _previousStatus = null;
-            _tray.ShowBalloonTip(5_000, "Sleams — Slack error", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(5_000, "Otter — Slack error", ex.Message, ToolTipIcon.Error);
         }
     }
 
@@ -172,8 +172,8 @@ class TrayApp : IDisposable
         {
             var prev = _previousStatus;
 
-            // If the previous status matches what Sleams set (race condition / desync),
-            // treat it as empty so we don't re-apply a stale Sleams status.
+            // If the previous status matches what Otter set (race condition / desync),
+            // treat it as empty so we don't re-apply a stale Otter status.
             var restoreText  = prev?.Text       ?? "";
             var restoreEmoji = prev?.Emoji      ?? "";
             var restoreExp   = prev?.Expiration ?? 0;
@@ -215,26 +215,26 @@ class TrayApp : IDisposable
         {
             label   = "Disabled";
             dot     = Color.Silver;
-            tooltip = "Sleams — disabled";
+            tooltip = "Otter — disabled";
         }
         else if (IsSnoozed)
         {
             var until = _config.SnoozedUntil!.Value.ToLocalTime();
             label   = $"Snoozed until {until:h:mm tt}";
             dot     = Color.SteelBlue;
-            tooltip = $"Sleams — snoozed until {until:h:mm tt}";
+            tooltip = $"Otter — snoozed until {until:h:mm tt}";
         }
         else if (_monitor.IsInCall)
         {
             label   = "On a Teams call";
             dot     = Color.OrangeRed;
-            tooltip = "Sleams — on a call";
+            tooltip = "Otter — on a call";
         }
         else
         {
             label   = "Monitoring";
             dot     = Color.LimeGreen;
-            tooltip = "Sleams — monitoring";
+            tooltip = "Otter — monitoring";
         }
 
         _statusItem.Text = $"● {label}";
