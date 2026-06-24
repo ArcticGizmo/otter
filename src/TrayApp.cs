@@ -7,6 +7,7 @@ class TrayApp : IDisposable
 {
     Config _config;
     bool _slackStatusSet;
+    bool _settingsOpen;
     SlackClient.SlackStatus? _previousStatus;
 
     readonly NotifyIcon _tray;
@@ -62,7 +63,8 @@ class TrayApp : IDisposable
             ContextMenuStrip = menu,
             Visible          = true,
         };
-        _tray.DoubleClick += OnOpenSettings;
+        // Left-click opens settings (more intuitive); right-click still shows the context menu.
+        _tray.MouseClick += OnTrayMouseClick;
 
         Application.ApplicationExit += OnApplicationExit;
 
@@ -131,15 +133,31 @@ class TrayApp : IDisposable
         RefreshUI();
     }
 
+    // Open settings on a left-click only — a right-click is reserved for the context menu, which the
+    // NotifyIcon shows itself.
+    void OnTrayMouseClick(object? s, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+            OnOpenSettings(s, e);
+    }
+
     void OnOpenSettings(object? s, EventArgs e)
     {
-        using var form = new SettingsWindow(_config);
-        if (form.ShowDialog() != DialogResult.OK) return;
+        // ShowDialog runs a nested message loop, so a second tray click could otherwise re-enter and
+        // stack another window on top. Guard against it.
+        if (_settingsOpen) return;
+        _settingsOpen = true;
+        try
+        {
+            using var form = new SettingsWindow(_config);
+            if (form.ShowDialog() != DialogResult.OK) return;
 
-        _config = form.Result;
-        _config.Save();
-        _enabledItem.Checked = _config.Enabled;
-        RefreshUI();
+            _config = form.Result;
+            _config.Save();
+            _enabledItem.Checked = _config.Enabled;
+            RefreshUI();
+        }
+        finally { _settingsOpen = false; }
     }
 
     void OnApplicationExit(object? s, EventArgs e)
