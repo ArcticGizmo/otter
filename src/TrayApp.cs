@@ -153,7 +153,9 @@ class TrayApp : IDisposable
         });
     }
 
-    void OnClearSnooze(object? s, EventArgs e)
+    void OnClearSnooze(object? s, EventArgs e) => ClearSnooze();
+
+    void ClearSnooze()
     {
         _config.SnoozedUntil = null;
         _config.Save();
@@ -185,7 +187,7 @@ class TrayApp : IDisposable
         {
             // The window edits the live config and persists each change itself, calling back here so
             // the tray reflects edits as they happen — there's no Save/Cancel round-trip.
-            using var form = new SettingsWindow(_config, OnSettingsChanged);
+            using var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze);
             form.ShowDialog();
         }
         finally { _settingsOpen = false; }
@@ -293,6 +295,10 @@ class TrayApp : IDisposable
         oldImg?.Dispose();
 
         _clearSnoozeItem.Enabled = IsSnoozed;
+
+        // Keep the tray toggles in step with the live config (the settings window can change these).
+        _enabledItem.Checked       = _config.Enabled;
+        _notificationsItem.Checked = _config.NotificationsEnabled;
 
         UpdateTrayIcon(color);
 

@@ -16,6 +16,8 @@ class SettingsWindow : Form
 
     readonly Config _config;
     readonly Action _onChanged;
+    readonly Action<int> _onSnooze;
+    readonly Action _onClearSnooze;
 
     // The app's otter (transparent) for in-app imagery — the banner and About header.
     readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
@@ -44,13 +46,20 @@ class SettingsWindow : Form
     // Getting started echoes the same connection line.
     Label _startConn = null!;
 
+    // Notifications page.
+    ToggleSwitch _notificationsToggle = null!;
+    Label        _snoozeStatus        = null!;
+    Button       _clearSnoozeBtn      = null!;
+
     // Automation page.
     ToggleSwitch _runAtLoginToggle = null!;
 
-    public SettingsWindow(Config config, Action onChanged)
+    public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze)
     {
-        _config    = config;
-        _onChanged = onChanged;
+        _config        = config;
+        _onChanged     = onChanged;
+        _onSnooze      = onSnooze;
+        _onClearSnooze = onClearSnooze;
         _fluid = new FluidLayout(FluidWidth);
 
         Text            = "Otter Settings";
@@ -100,11 +109,12 @@ class SettingsWindow : Form
         _contentHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.FormBg };
         _contentHost.Resize += (_, _) => _fluid.Apply();
 
-        AddPage("start",      "Getting started", BuildGettingStartedPage);
-        AddPage("slack",      "Slack",           BuildSlackPage);
-        AddPage("status",     "Status",          BuildStatusPage);
-        AddPage("automation", "Automation",      BuildAutomationPage);
-        AddPage("about",      "About",           BuildAboutPage);
+        AddPage("start",         "Getting started", BuildGettingStartedPage);
+        AddPage("slack",         "Slack",           BuildSlackPage);
+        AddPage("status",        "Status",          BuildStatusPage);
+        AddPage("notifications", "Notifications",   BuildNotificationsPage);
+        AddPage("automation",    "Automation",      BuildAutomationPage);
+        AddPage("about",         "About",           BuildAboutPage);
 
         Controls.Add(_contentHost); // Fill added first…
         Controls.Add(_navPanel);    // …then the Left rail claims its edge and the content fills the rest.
@@ -374,6 +384,74 @@ class SettingsWindow : Form
         _statusPreview.Text = string.IsNullOrEmpty(emoji) && string.IsNullOrEmpty(text)
             ? "(no status)"
             : $"{emoji}  {text}".Trim();
+    }
+
+    // ── Notifications ───────────────────────────────────────────────────────────────
+    void BuildNotificationsPage(FlowLayoutPanel page)
+    {
+        _notificationsToggle = Ui.MakeToggle();
+        _notificationsToggle.Checked = _config.NotificationsEnabled;
+        _notificationsToggle.CheckedChanged += (_, _) =>
+        {
+            if (_notificationsToggle.Checked == _config.NotificationsEnabled) return;
+            _config.NotificationsEnabled = _notificationsToggle.Checked;
+            Commit();
+        };
+        page.Controls.Add(Ui.TitleRow(_fluid, "Show notifications", _notificationsToggle));
+
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Show a brief desktop notification when Otter detects a call and updates your Slack status. " +
+            "Turn this off to update your status silently."));
+
+        page.Controls.Add(Ui.Separator(_fluid));
+
+        page.Controls.Add(Ui.SectionTitle("Snooze"));
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Pause Otter for a while. Your Slack status is cleared and won't be updated again until the " +
+            "snooze ends."));
+
+        var row = Ui.ButtonRow();
+        var b30  = Ui.MakeButton("30 minutes"); b30.Click  += (_, _) => DoSnooze(30);
+        var b60  = Ui.MakeButton("1 hour");     b60.Click  += (_, _) => DoSnooze(60);
+        var b120 = Ui.MakeButton("2 hours");    b120.Click += (_, _) => DoSnooze(120);
+        row.Controls.Add(b30);
+        row.Controls.Add(b60);
+        row.Controls.Add(b120);
+        page.Controls.Add(row);
+
+        var clearRow = Ui.ButtonRow();
+        _clearSnoozeBtn = Ui.MakeButton("Clear snooze");
+        _clearSnoozeBtn.Click += (_, _) => { _onClearSnooze(); UpdateSnoozeUI(); };
+        clearRow.Controls.Add(_clearSnoozeBtn);
+        page.Controls.Add(clearRow);
+
+        _snoozeStatus = new Label { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+        page.Controls.Add(_snoozeStatus);
+
+        UpdateSnoozeUI();
+    }
+
+    void DoSnooze(int minutes)
+    {
+        _onSnooze(minutes);
+        UpdateSnoozeUI();
+    }
+
+    void UpdateSnoozeUI()
+    {
+        bool snoozed = _config.SnoozedUntil.HasValue && _config.SnoozedUntil.Value > DateTime.UtcNow;
+        if (snoozed)
+        {
+            var until = _config.SnoozedUntil!.Value.ToLocalTime();
+            _snoozeStatus.Text      = $"Snoozed until {until:h:mm tt}";
+            _snoozeStatus.ForeColor = Theme.Accent;
+        }
+        else
+        {
+            _snoozeStatus.Text      = "Not snoozed";
+            _snoozeStatus.ForeColor = Theme.Muted;
+        }
+        _clearSnoozeBtn.Enabled = snoozed;
     }
 
     // ── Automation ────────────────────────────────────────────────────────────────
