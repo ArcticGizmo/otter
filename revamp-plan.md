@@ -98,8 +98,17 @@ Proposed pages:
 
 Mechanics to port: fluid-width reflow, dark title bar on `OnHandleCreated`, dark scrollbars on `OnShown`.
 
-### Phase 3 — Tray experience
+### Phase 3 — Tray experience  ✅ *done 2026-06-24*
 *Goal: the tray reads as intentional, not default.*
+
+> Delivered: a **dark-themed context menu** (`TrayMenu.cs` — `DarkMenuColorTable` +
+> `DarkMenuRenderer`) matching the app; the menu now has a bold status **header with a colour-coded
+> state dot** (the renderer skips its hover highlight) and accent check marks. Tray icons are now
+> driven by `OtterState`/`Theme.StatusColor`, and icon swapping frees the old GDI handle via
+> `NativeMethods.DestroyIcon` (fixing a per-refresh handle leak). Added a **"Show notifications"**
+> quiet preference (`Config.NotificationsEnabled`) that gates the call-detected balloon, toggled from
+> the tray. Verified by screenshotting the rendered menu. **Note:** the still-pending app-icon art
+> (Phase 0) is what would let the tray dot become a true otter mark; the themed dot is the interim.
 
 - Redesign the tray **status icon** set (monitoring / in-call / snoozed / disabled) to match the theme — crisper than the current ad-hoc dot, ideally derived from the otter mark.
 - Richer **context menu**: current-state header, quick toggles, snooze submenu (keep existing 30/60/120 + a "clear"), Settings, Quit. Consider a themed popover (claude-watch has `PopoverMenu`) vs. staying with `ContextMenuStrip` — see decisions.
