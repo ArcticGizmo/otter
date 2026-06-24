@@ -1,4 +1,4 @@
-namespace Sleams;
+namespace Otter;
 
 class SettingsWindow : Form
 {
@@ -14,7 +14,7 @@ class SettingsWindow : Form
     {
         Result = config.Clone();
 
-        Text            = "Sleams Settings";
+        Text            = "Otter Settings";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
         MinimizeBox     = false;
@@ -165,7 +165,7 @@ class SettingsWindow : Form
             MessageBox.Show(
                 "Enter your Slack app's Client ID first.\n\n" +
                 "Get it from api.slack.com/apps → your app → Basic Information.",
-                "Sleams", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                "Otter", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -183,7 +183,7 @@ class SettingsWindow : Form
         catch (Exception ex)
         {
             MessageBox.Show($"Could not connect to Slack:\n{ex.Message}",
-                "Sleams", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                "Otter", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {

@@ -1,4 +1,4 @@
-namespace Sleams;
+namespace Otter;
 
 class AudioMonitor : IDisposable
 {

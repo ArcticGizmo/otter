@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Sleams;
+namespace Otter;
 
 class Config
 {
@@ -17,7 +17,7 @@ class Config
 
     [JsonIgnore]
     static readonly string ConfigDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sleams");
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Otter");
 
     [JsonIgnore]
     static readonly string ConfigPath = Path.Combine(ConfigDir, "config.json");

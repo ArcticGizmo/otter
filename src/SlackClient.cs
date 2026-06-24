@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
 
-namespace Sleams;
+namespace Otter;
 
 static class SlackClient
 {
@@ -127,8 +127,8 @@ static class SlackClient
         try
         {
             var html = Encoding.UTF8.GetBytes(
-                "<html><head><title>Sleams</title></head><body style='font-family:sans-serif;padding:40px'>" +
-                "<h2>✅ Connected to Slack!</h2><p>You can close this tab and return to Sleams.</p></body></html>");
+                "<html><head><title>Otter</title></head><body style='font-family:sans-serif;padding:40px'>" +
+                "<h2>✅ Connected to Slack!</h2><p>You can close this tab and return to Otter.</p></body></html>");
             context.Response.ContentType     = "text/html; charset=utf-8";
             context.Response.ContentLength64 = html.Length;
             await context.Response.OutputStream.WriteAsync(html);
