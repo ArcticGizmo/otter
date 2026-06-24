@@ -1,12 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <Version>0.1.0</Version>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Otter</AssemblyName>
     <RootNamespace>Otter</RootNamespace>
+    <Product>Otter</Product>
+    <AssemblyTitle>Otter</AssemblyTitle>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="icon.ico" />
+    <EmbeddedResource Include="icon.png" />
+    <EmbeddedResource Include="icon-mark.png" LogicalName="Otter.icon-mark.png" />
+    <EmbeddedResource Include="..\CHANGELOG.md" LogicalName="Otter.CHANGELOG.md" />
+  </ItemGroup>
 </Project>

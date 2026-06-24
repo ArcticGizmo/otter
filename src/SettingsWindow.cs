@@ -15,7 +15,9 @@ class SettingsWindow : Form
 
     public Config Result { get; private set; }
 
-    readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
+    // The bare otter mark (transparent, no tile) for in-app imagery — the coloured squircle tile is
+    // reserved for the OS title-bar/taskbar icon, where it belongs.
+    readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon-mark.png");
 
     // Shell.
     FlowLayoutPanel _navPanel    = null!;
@@ -56,8 +58,7 @@ class SettingsWindow : Form
         Font            = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
         MinimumSize     = new Size(640, 500);
         ClientSize      = new Size(760, 560);
-        if (_icon != null)
-            Icon = Icon.FromHandle(_icon.GetHicon());
+        Icon = Ui.LoadEmbeddedIcon("Otter.icon.ico");
 
         BuildLayout();
         UpdateConnectionUI();

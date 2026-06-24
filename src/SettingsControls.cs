@@ -403,4 +403,17 @@ internal static class Ui
         }
         catch { return null; }
     }
+
+    // Loads a multi-size .ico embedded resource (all frames retained, so Windows picks the right size
+    // for the title bar / task bar). Use this for a Form's Icon rather than a PNG → GetHicon, which
+    // ships a single size that scales blurry.
+    public static Icon? LoadEmbeddedIcon(string resourceName)
+    {
+        try
+        {
+            using var stream = typeof(Ui).Assembly.GetManifestResourceStream(resourceName);
+            return stream != null ? new Icon(stream) : null;
+        }
+        catch { return null; }
+    }
 }

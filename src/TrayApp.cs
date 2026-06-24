@@ -19,6 +19,9 @@ class TrayApp : IDisposable
     readonly ToolStripMenuItem _notificationsItem;
     readonly ToolStripMenuItem _clearSnoozeItem;
 
+    // The app icon (brown otter on the accent tile) used as the tray icon base.
+    readonly Bitmap? _otterArt = Ui.LoadEmbeddedBitmap("Otter.icon.png");
+
     // GDI handle backing the current tray icon. Icon.FromHandle doesn't own the HICON that
     // Bitmap.GetHicon creates, so we track it and DestroyIcon it ourselves to avoid a handle leak
     // every time the icon changes.
@@ -289,25 +292,36 @@ class TrayApp : IDisposable
         _tray.Text = tooltip.Length > 63 ? tooltip[..63] : tooltip;
     }
 
-    // Renders a glossy state dot and swaps it onto the tray, freeing the previous GDI handle.
+    // Draws the otter app icon with a small state-colour badge in the corner, and swaps it onto the
+    // tray — freeing the previous GDI handle. The badge keeps the operating state readable at a
+    // glance now that the icon itself is the otter rather than a plain state dot.
     void UpdateTrayIcon(Color color)
     {
-        using var bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
+        const int s = 32;
+        using var bmp = new Bitmap(s, s, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.SmoothingMode     = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode   = PixelOffsetMode.HighQuality;
             g.Clear(Color.Transparent);
 
+            if (_otterArt != null)
+                g.DrawImage(_otterArt, new Rectangle(0, 0, s, s));
+            else
+            {
+                using var baseFill = new SolidBrush(color);
+                g.FillEllipse(baseFill, 1, 1, s - 2, s - 2);
+            }
+
+            // State badge, bottom-right, with a dark ring so it reads on the icon and the taskbar.
+            float d  = s * 0.40f;
+            float bx = s - d - s * 0.04f, by = s - d - s * 0.04f;
+            float r  = s * 0.06f;
+            using var ring = new SolidBrush(Color.FromArgb(235, 18, 18, 24));
+            g.FillEllipse(ring, bx - r, by - r, d + 2 * r, d + 2 * r);
             using var fill = new SolidBrush(color);
-            g.FillEllipse(fill, 1, 1, 13, 13);
-
-            // Subtle shadow ring
-            using var ring = new Pen(Color.FromArgb(60, 0, 0, 0), 1f);
-            g.DrawEllipse(ring, 1, 1, 13, 13);
-
-            // Sheen highlight
-            using var shine = new SolidBrush(Color.FromArgb(90, 255, 255, 255));
-            g.FillEllipse(shine, 4, 3, 6, 4);
+            g.FillEllipse(fill, bx, by, d, d);
         }
 
         var hicon    = bmp.GetHicon();
@@ -339,6 +353,7 @@ class TrayApp : IDisposable
         _tray.Icon?.Dispose();
         if (_trayHicon != IntPtr.Zero) NativeMethods.DestroyIcon(_trayHicon);
         _statusItem.Image?.Dispose();
+        _otterArt?.Dispose();
         _tray.Dispose();
     }
 }

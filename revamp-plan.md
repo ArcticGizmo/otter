@@ -48,8 +48,18 @@ is mostly additive: a design-system layer, a rebuilt settings window, a richer t
 
 ## 3. Phased plan
 
-### Phase 0 — Foundations & branding
+### Phase 0 — Foundations & branding  ✅ *done 2026-06-24*
 *Goal: the scaffolding everything else hangs on.*
+
+> Delivered: target framework bumped **net8 → net10**; `Otter.csproj` now carries `Version` (0.1.0),
+> `Product`/`AssemblyTitle`, `ApplicationIcon`, and embeds `icon.ico`, `icon.png`, and `CHANGELOG.md`
+> (logical name `Otter.CHANGELOG.md`). Added a real **otter app icon** — a white 🦦 glyph on an
+> accent-gradient squircle — emitted as `icon.png` (256) + a multi-size `icon.ico`, with the
+> generator committed at `tools/icongen/` so the assets are reproducible (verified byte-identical).
+> The settings window loads the multi-size `.ico` for a crisp title-bar/taskbar icon, and the otter
+> now shows in the banner + About. `AppInfo.cs` already landed in Phase 2.
+> **Tray note:** the tray icon stays the colour-coded state dot (clearer than line-art at 16px); a
+> future option is an otter-with-state-badge tray icon.
 
 - **Bump target framework `net8.0-windows` → `net10.0-windows`** (decision #2). The net10 SDK
   (10.0.301) is confirmed installed locally, so this is low-risk and lets us reuse claude-watch

@@ -51,9 +51,10 @@ internal sealed class DarkMenuColorTable : ProfessionalColorTable
     public override Color MenuItemPressedGradientEnd    => Theme.Border;
     public override Color SeparatorDark                 => Theme.Border;
     public override Color SeparatorLight                => Theme.Border;
-    public override Color CheckBackground               => Theme.Accent;
-    public override Color CheckSelectedBackground       => Theme.Accent;
-    public override Color CheckPressedBackground        => Theme.Accent;
+    // A subtle dark box behind check marks — a solid accent square reads as a glitch on the dark menu.
+    public override Color CheckBackground               => Theme.ButtonBg;
+    public override Color CheckSelectedBackground       => Theme.ButtonHover;
+    public override Color CheckPressedBackground        => Theme.ButtonHover;
 }
 
 /// <summary>Professional renderer wired to <see cref="DarkMenuColorTable"/>, with two tweaks: it
