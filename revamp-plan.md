@@ -124,8 +124,20 @@ Mechanics to port: fluid-width reflow, dark title bar on `OnHandleCreated`, dark
 - Richer **context menu**: current-state header, quick toggles, snooze submenu (keep existing 30/60/120 + a "clear"), Settings, Quit. Consider a themed popover (claude-watch has `PopoverMenu`) vs. staying with `ContextMenuStrip` — see decisions.
 - Replace raw balloon tips with consistent, branded notifications; respect a "quiet" preference.
 
-### Phase 4 — Feature & architecture
+### Phase 4 — Feature & architecture  ✅ *done 2026-06-24*
 *Goal: deliver on the README's promise ("first signal… across all your tools") — decision #3: refactor to pluggable signals.*
+
+> Delivered: the pluggable-signal seam — `IStatusSignal` (named provider with `IsActive` + `Changed`),
+> `SignalCoordinator` (aggregates providers, resolves precedence by list order, raises `ActiveChanged`
+> only when the winner changes), and `TeamsCallSignal` (the old `AudioMonitor` logic, now the one live
+> provider). `TrayApp` subscribes to the coordinator, not the monitor, and a new idempotent
+> `ReevaluateStatus()` centralises set/clear so enable-toggle, snooze, and snooze-expiry all re-sync
+> the Slack status correctly. `OtterState.InCall` generalised to `Active` (label comes from the active
+> signal). Added **run-at-login** (`Startup.cs`, per-user Run key) surfaced on a new **Automation**
+> settings page. Verified: clean build, `SignalCoordinator` unit-tested (precedence + events), and the
+> Automation page rendered. **Not runtime-tested** against a live Teams call (the polling logic is
+> unchanged from the prior `AudioMonitor`). Snooze "show remaining time" is covered by the existing
+> header ("Snoozed until …"); a dedicated one-click *extend* was left out as minor.
 
 - Refactor `AudioMonitor` into a small **signal-provider abstraction**. Sketch:
   - An `IStatusSignal` interface — a named provider that raises `Activated`/`Deactivated` and

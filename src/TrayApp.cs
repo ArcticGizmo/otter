@@ -11,7 +11,7 @@ class TrayApp : IDisposable
     SlackClient.SlackStatus? _previousStatus;
 
     readonly NotifyIcon _tray;
-    readonly AudioMonitor _monitor;
+    readonly SignalCoordinator _coordinator;
 
     // Menu items updated dynamically
     readonly ToolStripMenuItem _statusItem;
@@ -29,10 +29,12 @@ class TrayApp : IDisposable
 
     public TrayApp()
     {
-        _config  = Config.Load();
-        _monitor = new AudioMonitor("ms-teams");
-        _monitor.CallStarted += OnCallStarted;
-        _monitor.CallEnded   += OnCallEnded;
+        _config = Config.Load();
+
+        // The set of "you're busy" signals. Teams is the only one today; add more here and the rest
+        // of the app (status updates, tray state) follows automatically.
+        _coordinator = new SignalCoordinator(new IStatusSignal[] { new TeamsCallSignal() });
+        _coordinator.ActiveChanged += OnActiveChanged;
 
         // ── Context menu ──────────────────────────────────────────────────────
 
@@ -94,32 +96,34 @@ class TrayApp : IDisposable
         RefreshUI();
     }
 
-    public void Start() => _monitor.Start();
+    public void Start() => _coordinator.Start();
 
     // ── State helpers ─────────────────────────────────────────────────────────
 
-    bool IsActive  => _config.Enabled && !IsSnoozed;
+    bool IsEnabled => _config.Enabled && !IsSnoozed;
     bool IsSnoozed => _config.SnoozedUntil.HasValue && _config.SnoozedUntil.Value > DateTime.UtcNow;
 
-    // ── Audio events (background thread → marshal to UI) ──────────────────────
-
-    void OnCallStarted()
+    // Brings the Slack status in line with the current state: set it when Otter is enabled and a
+    // signal is firing, clear/restore it otherwise. Idempotent, so it's safe to call from any state
+    // change (signal flip, enable toggle, snooze start/clear/expire).
+    void ReevaluateStatus()
     {
-        RunOnUiThread(() =>
-        {
-            if (!IsActive) return;
-            _ = SetSlackStatusAsync();
-            if (_config.NotificationsEnabled)
-                _tray.ShowBalloonTip(3_000, "Otter", "Teams call detected — updating Slack status.", ToolTipIcon.Info);
-            RefreshUI();
-        });
+        bool shouldShow = IsEnabled && _coordinator.Active != null;
+        if (shouldShow && !_slackStatusSet)      _ = SetSlackStatusAsync();
+        else if (!shouldShow && _slackStatusSet) _ = ClearSlackStatusAsync();
     }
 
-    void OnCallEnded()
+    // ── Signal events (background thread → marshal to UI) ──────────────────────
+
+    void OnActiveChanged(IStatusSignal? activeSignal)
     {
         RunOnUiThread(() =>
         {
-            if (_slackStatusSet) _ = ClearSlackStatusAsync();
+            bool announce = activeSignal != null && IsEnabled && !_slackStatusSet && _config.NotificationsEnabled;
+            ReevaluateStatus();
+            if (announce)
+                _tray.ShowBalloonTip(3_000, "Otter",
+                    $"{activeSignal!.ActiveDescription} — updating your Slack status.", ToolTipIcon.Info);
             RefreshUI();
         });
     }
@@ -129,24 +133,25 @@ class TrayApp : IDisposable
     void OnToggleEnabled(object? s, EventArgs e)
     {
         _config.Enabled = _enabledItem.Checked;
-        if (!_config.Enabled && _slackStatusSet) _ = ClearSlackStatusAsync();
         _config.Save();
+        ReevaluateStatus();   // clears when disabling, or re-applies if a signal is already firing
         RefreshUI();
     }
 
     void Snooze(int minutes)
     {
         _config.SnoozedUntil = DateTime.UtcNow.AddMinutes(minutes);
-        if (_slackStatusSet) _ = ClearSlackStatusAsync();
         _config.Save();
+        ReevaluateStatus();   // snoozed ⇒ status cleared
         RefreshUI();
 
-        // Auto-expire the snooze
+        // Auto-expire the snooze, then re-apply the status if a signal is still firing.
         _ = Task.Delay(TimeSpan.FromMinutes(minutes)).ContinueWith(_ =>
         {
-            if (IsSnoozed) return; // already manually cleared
+            if (IsSnoozed) return; // already manually cleared or re-snoozed further out
             _config.SnoozedUntil = null;
-            RunOnUiThread(RefreshUI);
+            _config.Save();
+            RunOnUiThread(() => { ReevaluateStatus(); RefreshUI(); });
         });
     }
 
@@ -154,6 +159,7 @@ class TrayApp : IDisposable
     {
         _config.SnoozedUntil = null;
         _config.Save();
+        ReevaluateStatus();
         RefreshUI();
     }
 
@@ -254,10 +260,10 @@ class TrayApp : IDisposable
 
     // Otter's current operating state, driving both the tray icon colour and the menu header.
     OtterState CurrentState =>
-        !_config.Enabled   ? OtterState.Disabled :
-        IsSnoozed          ? OtterState.Snoozed  :
-        _monitor.IsInCall  ? OtterState.InCall   :
-                             OtterState.Monitoring;
+        !_config.Enabled            ? OtterState.Disabled :
+        IsSnoozed                   ? OtterState.Snoozed  :
+        _coordinator.Active != null ? OtterState.Active   :
+                                      OtterState.Monitoring;
 
     void RefreshUI()
     {
@@ -272,8 +278,9 @@ class TrayApp : IDisposable
             case OtterState.Snoozed:
                 var until = _config.SnoozedUntil!.Value.ToLocalTime();
                 label = $"Snoozed until {until:h:mm tt}"; tooltip = $"Otter — snoozed until {until:h:mm tt}"; break;
-            case OtterState.InCall:
-                label = "On a Teams call"; tooltip = "Otter — on a call"; break;
+            case OtterState.Active:
+                label = _coordinator.Active?.ActiveDescription ?? "Active";
+                tooltip = $"Otter — {label.ToLowerInvariant()}"; break;
             default:
                 label = "Monitoring";      tooltip = "Otter — monitoring"; break;
         }
@@ -348,7 +355,7 @@ class TrayApp : IDisposable
 
     public void Dispose()
     {
-        _monitor.Dispose();
+        _coordinator.Dispose();
         _tray.Visible = false;
         _tray.Icon?.Dispose();
         if (_trayHicon != IntPtr.Zero) NativeMethods.DestroyIcon(_trayHicon);

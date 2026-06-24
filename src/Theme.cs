@@ -32,7 +32,7 @@ internal static class Theme
     public static Color StatusColor(OtterState state) => state switch
     {
         OtterState.Monitoring => Green,
-        OtterState.InCall      => Orange,
+        OtterState.Active      => Orange,
         OtterState.Snoozed     => Accent,
         OtterState.Disabled    => Muted,
         _                      => Muted,
@@ -51,7 +51,7 @@ internal static class Theme
 internal enum OtterState
 {
     Monitoring,
-    InCall,
+    Active,      // a status signal is firing (e.g. on a Teams call)
     Snoozed,
     Disabled,
 }

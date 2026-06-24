@@ -42,6 +42,9 @@ class SettingsWindow : Form
     // Getting started echoes the same connection line.
     Label _startConn = null!;
 
+    // Automation page.
+    ToggleSwitch _runAtLoginToggle = null!;
+
     public SettingsWindow(Config config)
     {
         Result = config.Clone();
@@ -103,10 +106,11 @@ class SettingsWindow : Form
         right.Controls.Add(_contentHost); // Fill added first so the docked footer claims its edge.
         right.Controls.Add(footer);
 
-        AddPage("start",  "Getting started", BuildGettingStartedPage);
-        AddPage("slack",  "Slack",           BuildSlackPage);
-        AddPage("status", "Status",          BuildStatusPage);
-        AddPage("about",  "About",           BuildAboutPage);
+        AddPage("start",      "Getting started", BuildGettingStartedPage);
+        AddPage("slack",      "Slack",           BuildSlackPage);
+        AddPage("status",     "Status",          BuildStatusPage);
+        AddPage("automation", "Automation",      BuildAutomationPage);
+        AddPage("about",      "About",           BuildAboutPage);
 
         Controls.Add(right);    // Fill added first…
         Controls.Add(_navPanel); // …then the Left rail claims its edge and the right side fills the rest.
@@ -385,6 +389,21 @@ class SettingsWindow : Form
             : $"{emoji}  {text}".Trim();
     }
 
+    // ── Automation ────────────────────────────────────────────────────────────────
+    void BuildAutomationPage(FlowLayoutPanel page)
+    {
+        _runAtLoginToggle = Ui.MakeToggle();
+        _runAtLoginToggle.Checked = Startup.IsEnabled();
+        page.Controls.Add(Ui.TitleRow(_fluid, "Start at login", _runAtLoginToggle));
+
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Launch Otter in the background when you sign in to Windows, so your Slack status is " +
+            "managed without you having to start it yourself."));
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Otter registers its current location. If you move or reinstall the app, toggle this off " +
+            "and on again to refresh it."));
+    }
+
     // ── About ───────────────────────────────────────────────────────────────────────
     void BuildAboutPage(FlowLayoutPanel page)
     {
@@ -505,6 +524,9 @@ class SettingsWindow : Form
         Result.StatusText    = _statusTextBox.Text.Trim();
         Result.StatusEmoji   = _emojiBox.Text.Trim();
         Result.SlackClientId = _clientIdBox.Text.Trim();
+
+        // Run-at-login lives in the registry, not Config, so apply it here on Save (Cancel leaves it).
+        Startup.SetEnabled(_runAtLoginToggle.Checked);
     }
 
     protected override void Dispose(bool disposing)
