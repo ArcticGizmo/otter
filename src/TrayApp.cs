@@ -7,7 +7,7 @@ class TrayApp : IDisposable
 {
     Config _config;
     bool _slackStatusSet;
-    bool _settingsOpen;
+    SettingsWindow? _settingsForm;
     SlackClient.SlackStatus? _previousStatus;
 
     readonly NotifyIcon _tray;
@@ -179,18 +179,44 @@ class TrayApp : IDisposable
 
     void OnOpenSettings(object? s, EventArgs e)
     {
-        // ShowDialog runs a nested message loop, so a second tray click could otherwise re-enter and
-        // stack another window on top. Guard against it.
-        if (_settingsOpen) return;
-        _settingsOpen = true;
-        try
+        // When the window is already open it may be sitting on another virtual desktop — pull it onto
+        // the one the user is currently viewing and focus it, rather than stacking a copy or yanking
+        // the user back to the desktop it was opened on.
+        if (_settingsForm is { IsDisposed: false })
         {
-            // The window edits the live config and persists each change itself, calling back here so
-            // the tray reflects edits as they happen — there's no Save/Cancel round-trip.
-            using var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze);
-            form.ShowDialog();
+            FocusSettingsOnCurrentDesktop();
+            return;
         }
-        finally { _settingsOpen = false; }
+
+        // Shown modeless (no owner) so it's a free-standing top-level window we can move between
+        // virtual desktops. It edits the live config and persists each change itself, calling back
+        // here so the tray reflects edits as they happen — there's no Save/Cancel round-trip.
+        var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze);
+        _settingsForm = form;
+        form.FormClosed += (_, _) => { form.Dispose(); _settingsForm = null; };
+        form.Show();
+        form.Activate();
+    }
+
+    // Brings the open settings window to the user's current virtual desktop and focuses it.
+    void FocusSettingsOnCurrentDesktop()
+    {
+        var form = _settingsForm;
+        if (form is null || form.IsDisposed || !form.IsHandleCreated) return;
+
+        // If it's parked on another virtual desktop, move it onto the one the user is viewing —
+        // otherwise Activate() below would drag the user over to the window's desktop instead.
+        // Try the virtual-desktop manager first; if it can't move our window, recreating the
+        // handle re-homes it onto the active desktop.
+        if (!NativeMethods.IsWindowOnCurrentDesktop(form.Handle) &&
+            !NativeMethods.TryMoveWindowToCurrentDesktop(form.Handle))
+        {
+            form.RehomeHandle();
+        }
+        if (form.WindowState == FormWindowState.Minimized)
+            form.WindowState = FormWindowState.Normal;
+        form.Activate();
+        form.BringToFront();
     }
 
     void OnSettingsChanged()

@@ -85,6 +85,11 @@ class SettingsWindow : Form
         NativeMethods.UseDarkTitleBar(Handle);
     }
 
+    // Recreates the native window handle. A window's virtual-desktop association is fixed to its
+    // HWND, so when the tray can't move the window across desktops any other way, recreating the
+    // handle re-homes it: the new HWND is born on whichever desktop the user is currently viewing.
+    public void RehomeHandle() => RecreateHandle();
+
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
