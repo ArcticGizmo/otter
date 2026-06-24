@@ -76,8 +76,17 @@ is mostly additive: a design-system layer, a rebuilt settings window, a richer t
 - Add **`NativeMethods`** dark helpers — `UseDarkTitleBar`, `UseDarkScrollBars`, `DestroyIcon` (Otter already has a `NativeMethods.cs` for audio; extend it).
 - Add **custom controls** (`SettingsControls.cs`): `ToggleSwitch`, and the factory helpers Otter needs (`SectionTitle`, `BodyText`, `TitleRow`, `ButtonRow`, `MakeButton`, `MakeToggle`, `MakeTextBox`, `FieldCaption`, `Separator`, `LinkRow`). Port `Spinner` if async flows (OAuth) want it.
 
-### Phase 2 — Settings window revamp
+### Phase 2 — Settings window revamp  ✅ *done 2026-06-24*
 *Goal: replace `SettingsWindow` with a claude-watch-style nav-rail window.*
+
+> Delivered: `SettingsWindow` rebuilt as a dark, resizable nav-rail shell (rail + fluid content +
+> Save/Cancel footer) using the Phase 1 `Ui`/`FluidLayout` toolkit, dark title bar + scrollbars.
+> Pages shipped: **Getting started**, **Slack** (with a `Spinner` during OAuth), **Status** (with a
+> live preview chip), and **About**. The `TrayApp` contract (`new SettingsWindow(config)` →
+> `ShowDialog()` → `Result`) is unchanged, so Save/Cancel still cleanly commits or discards.
+> Verified by screenshotting all four pages via a throwaway harness. `AppInfo.cs` was pulled forward
+> from Phase 0 (About needs it). **Deferred:** Automation (run-at-login → Phase 4) and Changelog
+> (needs an embedded `CHANGELOG.md` → Phase 0/5) — left out so every shipped page does something real.
 
 Proposed pages:
 - **Getting started** — banner (otter logo + tagline), what-it-does bullets, current connection state.
