@@ -4,16 +4,18 @@ namespace Otter;
 /// Otter's first-class settings window: a dark, resizable shell split into a fixed-width left
 /// navigation rail and a fluid content area. The nav switches between pages — Getting started,
 /// Slack, Status, and About — built entirely from the <see cref="Ui"/> control factory so they stay
-/// visually consistent. Edits are made on a private clone of the <see cref="Config"/>; the caller
-/// reads <see cref="Result"/> only when the user clicks Save (DialogResult.OK), so Cancel cleanly
-/// discards everything including an in-progress Slack connection.
+/// visually consistent. Edits apply directly to the live <see cref="Config"/> and persist as the
+/// user makes them — text fields commit when focus leaves, toggles and the Slack connection commit
+/// instantly — so there is no Save/Cancel step. Each commit invokes <c>onChanged</c> so the caller
+/// can persist the config and refresh the tray.
 /// </summary>
 class SettingsWindow : Form
 {
     const int NavWidth = 168;
     const int PagePad  = 18;
 
-    public Config Result { get; private set; }
+    readonly Config _config;
+    readonly Action _onChanged;
 
     // The app's otter (transparent) for in-app imagery — the banner and About header.
     readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
@@ -45,9 +47,10 @@ class SettingsWindow : Form
     // Automation page.
     ToggleSwitch _runAtLoginToggle = null!;
 
-    public SettingsWindow(Config config)
+    public SettingsWindow(Config config, Action onChanged)
     {
-        Result = config.Clone();
+        _config    = config;
+        _onChanged = onChanged;
         _fluid = new FluidLayout(FluidWidth);
 
         Text            = "Otter Settings";
@@ -94,17 +97,8 @@ class SettingsWindow : Form
             Padding       = new Padding(0, 8, 0, 0),
         };
 
-        // The right side stacks a fluid content area above a Save/Cancel footer. Wrapping them in a
-        // container keeps the footer clear of the nav rail and lets the content host own its own width.
-        var right = new Panel { Dock = DockStyle.Fill, BackColor = Theme.FormBg };
-
         _contentHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.FormBg };
         _contentHost.Resize += (_, _) => _fluid.Apply();
-
-        var footer = BuildFooter();
-
-        right.Controls.Add(_contentHost); // Fill added first so the docked footer claims its edge.
-        right.Controls.Add(footer);
 
         AddPage("start",      "Getting started", BuildGettingStartedPage);
         AddPage("slack",      "Slack",           BuildSlackPage);
@@ -112,46 +106,18 @@ class SettingsWindow : Form
         AddPage("automation", "Automation",      BuildAutomationPage);
         AddPage("about",      "About",           BuildAboutPage);
 
-        Controls.Add(right);    // Fill added first…
-        Controls.Add(_navPanel); // …then the Left rail claims its edge and the right side fills the rest.
+        Controls.Add(_contentHost); // Fill added first…
+        Controls.Add(_navPanel);    // …then the Left rail claims its edge and the content fills the rest.
 
         SelectPage("start");
     }
 
-    Panel BuildFooter()
+    // Persists the live config and lets the caller refresh the tray. Called from each control as the
+    // user edits, so changes take effect immediately without a Save step.
+    void Commit()
     {
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = Theme.FormBg };
-        var topBorder = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Theme.Border };
-
-        var cancelBtn = Ui.MakeButton("Cancel");
-        cancelBtn.DialogResult = DialogResult.Cancel;
-        cancelBtn.Margin = new Padding(0);
-
-        var saveBtn = Ui.MakeButton("Save");
-        saveBtn.DialogResult = DialogResult.OK;
-        saveBtn.BackColor = Theme.Accent;
-        saveBtn.ForeColor = Theme.FormBg;
-        saveBtn.FlatAppearance.BorderColor        = Theme.Accent;
-        saveBtn.FlatAppearance.MouseOverBackColor = Theme.AccentHover;
-        saveBtn.Margin = new Padding(0, 0, 10, 0);
-        saveBtn.Click += OnSave;
-
-        footer.Controls.Add(topBorder);
-        footer.Controls.Add(saveBtn);
-        footer.Controls.Add(cancelBtn);
-
-        void Position()
-        {
-            int midY = (footer.Height - saveBtn.Height) / 2 + 1; // +1 to clear the top border line
-            cancelBtn.Location = new Point(footer.Width - cancelBtn.Width - 18, midY);
-            saveBtn.Location   = new Point(cancelBtn.Left - saveBtn.Width - 8, midY);
-        }
-        footer.Resize += (_, _) => Position();
-        Position();
-
-        AcceptButton = saveBtn;
-        CancelButton = cancelBtn;
-        return footer;
+        _config.Save();
+        _onChanged();
     }
 
     // Builds a page panel, runs its content builder, and registers the matching nav item.
@@ -318,7 +284,14 @@ class SettingsWindow : Form
             "sign-in (PKCE) — no client secret is stored."));
 
         page.Controls.Add(Ui.FieldCaption("Client ID"));
-        _clientIdBox = Ui.MakeTextBox(Result.SlackClientId);
+        _clientIdBox = Ui.MakeTextBox(_config.SlackClientId);
+        _clientIdBox.Leave += (_, _) =>
+        {
+            var clientId = _clientIdBox.Text.Trim();
+            if (clientId == _config.SlackClientId) return;
+            _config.SlackClientId = clientId;
+            Commit();
+        };
         _fluid.AddWidth(_clientIdBox);
         page.Controls.Add(_clientIdBox);
 
@@ -352,15 +325,29 @@ class SettingsWindow : Form
         page.Controls.Add(Ui.BodyText(_fluid, "What Otter sets your Slack status to while you're on a Teams call."));
 
         page.Controls.Add(Ui.FieldCaption("Status text"));
-        _statusTextBox = Ui.MakeTextBox(Result.StatusText);
+        _statusTextBox = Ui.MakeTextBox(_config.StatusText);
         _fluid.AddWidth(_statusTextBox);
         _statusTextBox.TextChanged += (_, _) => UpdateStatusPreview();
+        _statusTextBox.Leave += (_, _) =>
+        {
+            var text = _statusTextBox.Text.Trim();
+            if (text == _config.StatusText) return;
+            _config.StatusText = text;
+            Commit();
+        };
         page.Controls.Add(_statusTextBox);
 
         page.Controls.Add(Ui.FieldCaption("Emoji"));
-        _emojiBox = Ui.MakeTextBox(Result.StatusEmoji);
+        _emojiBox = Ui.MakeTextBox(_config.StatusEmoji);
         _emojiBox.Width = 220;
         _emojiBox.TextChanged += (_, _) => UpdateStatusPreview();
+        _emojiBox.Leave += (_, _) =>
+        {
+            var emoji = _emojiBox.Text.Trim();
+            if (emoji == _config.StatusEmoji) return;
+            _config.StatusEmoji = emoji;
+            Commit();
+        };
         page.Controls.Add(_emojiBox);
         page.Controls.Add(Ui.FieldCaption("e.g. :headphones:"));
 
@@ -394,6 +381,8 @@ class SettingsWindow : Form
     {
         _runAtLoginToggle = Ui.MakeToggle();
         _runAtLoginToggle.Checked = Startup.IsEnabled();
+        // Run-at-login lives in the registry, not Config, so apply it straight away on toggle.
+        _runAtLoginToggle.CheckedChanged += (_, _) => Startup.SetEnabled(_runAtLoginToggle.Checked);
         page.Controls.Add(Ui.TitleRow(_fluid, "Start at login", _runAtLoginToggle));
 
         page.Controls.Add(Ui.BodyText(_fluid,
@@ -453,11 +442,11 @@ class SettingsWindow : Form
     // ── Connection state ────────────────────────────────────────────────────────────
     void UpdateConnectionUI()
     {
-        bool connected = !string.IsNullOrEmpty(Result.SlackToken);
+        bool connected = !string.IsNullOrEmpty(_config.SlackToken);
 
         if (connected)
         {
-            _connStatus.Text      = $"✓  Connected to {Result.SlackTeamName}";
+            _connStatus.Text      = $"✓  Connected to {_config.SlackTeamName}";
             _connStatus.ForeColor = Theme.Green;
             _connectBtn.Text      = "Reconnect";
         }
@@ -471,7 +460,7 @@ class SettingsWindow : Form
 
         if (_startConn != null)
         {
-            _startConn.Text      = connected ? $"Connected to {Result.SlackTeamName}." : "Not connected yet — set up Slack on the Slack page.";
+            _startConn.Text      = connected ? $"Connected to {_config.SlackTeamName}." : "Not connected yet — set up Slack on the Slack page.";
             _startConn.ForeColor = connected ? Theme.Fg : Theme.Muted;
         }
     }
@@ -495,9 +484,10 @@ class SettingsWindow : Form
         try
         {
             var (token, teamName) = await SlackClient.RunOAuthFlowAsync(clientId);
-            Result.SlackToken    = token;
-            Result.SlackTeamName = teamName;
-            Result.SlackClientId = clientId;
+            _config.SlackToken    = token;
+            _config.SlackTeamName = teamName;
+            _config.SlackClientId = clientId;
+            Commit();
         }
         catch (Exception ex)
         {
@@ -514,19 +504,10 @@ class SettingsWindow : Form
 
     void OnDisconnect(object? s, EventArgs e)
     {
-        Result.SlackToken    = "";
-        Result.SlackTeamName = "";
+        _config.SlackToken    = "";
+        _config.SlackTeamName = "";
+        Commit();
         UpdateConnectionUI();
-    }
-
-    void OnSave(object? s, EventArgs e)
-    {
-        Result.StatusText    = _statusTextBox.Text.Trim();
-        Result.StatusEmoji   = _emojiBox.Text.Trim();
-        Result.SlackClientId = _clientIdBox.Text.Trim();
-
-        // Run-at-login lives in the registry, not Config, so apply it here on Save (Cancel leaves it).
-        Startup.SetEnabled(_runAtLoginToggle.Checked);
     }
 
     protected override void Dispose(bool disposing)

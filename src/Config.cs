@@ -38,16 +38,4 @@ class Config
         Directory.CreateDirectory(ConfigDir);
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, JsonOpts));
     }
-
-    public Config Clone() => new()
-    {
-        SlackToken    = SlackToken,
-        SlackTeamName = SlackTeamName,
-        SlackClientId = SlackClientId,
-        StatusText    = StatusText,
-        StatusEmoji   = StatusEmoji,
-        Enabled       = Enabled,
-        NotificationsEnabled = NotificationsEnabled,
-        SnoozedUntil  = SnoozedUntil,
-    };
 }

@@ -185,15 +185,18 @@ class TrayApp : IDisposable
         _settingsOpen = true;
         try
         {
-            using var form = new SettingsWindow(_config);
-            if (form.ShowDialog() != DialogResult.OK) return;
-
-            _config = form.Result;
-            _config.Save();
-            _enabledItem.Checked = _config.Enabled;
-            RefreshUI();
+            // The window edits the live config and persists each change itself, calling back here so
+            // the tray reflects edits as they happen — there's no Save/Cancel round-trip.
+            using var form = new SettingsWindow(_config, OnSettingsChanged);
+            form.ShowDialog();
         }
         finally { _settingsOpen = false; }
+    }
+
+    void OnSettingsChanged()
+    {
+        ReevaluateStatus();   // a new status text/emoji or a fresh/dropped connection may change what's shown
+        RefreshUI();
     }
 
     void OnApplicationExit(object? s, EventArgs e)
