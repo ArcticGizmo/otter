@@ -60,8 +60,13 @@ is mostly additive: a design-system layer, a rebuilt settings window, a richer t
   ships **no icon asset**, so this is net-new.
 - Add `CHANGELOG.md` and embed it.
 
-### Phase 1 — Design system
+### Phase 1 — Design system  ✅ *done 2026-06-24*
 *Goal: a reusable **dark** UI toolkit (decision #1: dark-only), ported and slimmed for Otter's needs.*
+
+> Delivered: `Theme.cs` (dark palette + `OtterState` status colours + `Blend`), dark-mode helpers
+> added to `NativeMethods.cs` (`UseDarkTitleBar`, `UseDarkScrollBars`, `DestroyIcon`), and
+> `SettingsControls.cs` (`ToggleSwitch`, `Spinner`, a reusable `FluidLayout`, and the `Ui` control
+> factory). Builds clean on the existing net8 target; not yet wired into a window (that's Phase 2).
 
 > **Dark-only** keeps things cohesive with claude-watch and avoids making every control
 > theme-aware. The `Theme` class stays the single source of color so a light/system mode could
