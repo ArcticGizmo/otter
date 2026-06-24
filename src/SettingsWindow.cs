@@ -15,9 +15,8 @@ class SettingsWindow : Form
 
     public Config Result { get; private set; }
 
-    // The bare otter mark (transparent, no tile) for in-app imagery — the coloured squircle tile is
-    // reserved for the OS title-bar/taskbar icon, where it belongs.
-    readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon-mark.png");
+    // The app's otter (transparent) for in-app imagery — the banner and About header.
+    readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
 
     // Shell.
     FlowLayoutPanel _navPanel    = null!;

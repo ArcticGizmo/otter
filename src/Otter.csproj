@@ -16,7 +16,6 @@
   <ItemGroup>
     <EmbeddedResource Include="icon.ico" />
     <EmbeddedResource Include="icon.png" />
-    <EmbeddedResource Include="icon-mark.png" LogicalName="Otter.icon-mark.png" />
     <EmbeddedResource Include="..\CHANGELOG.md" LogicalName="Otter.CHANGELOG.md" />
   </ItemGroup>
 </Project>
