@@ -39,10 +39,9 @@ class TrayApp : IDisposable
         // ── Context menu ──────────────────────────────────────────────────────
 
         // Non-interactive status header — a bold label with a colour-coded state dot in the image
-        // margin. Tag "header" tells the renderer to skip the hover highlight.
+        // margin. It has no click handler, so clicking it is a no-op.
         _statusItem = new ToolStripMenuItem("Monitoring")
         {
-            Tag  = "header",
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Point),
         };
 
@@ -80,7 +79,6 @@ class TrayApp : IDisposable
             new ToolStripSeparator(),
             new ToolStripMenuItem("Quit", null, (_, _) => Application.Exit()),
         });
-        TrayMenu.ApplyDark(menu);
 
         _tray = new NotifyIcon
         {
