@@ -11,6 +11,7 @@ class Config
     public string StatusText      { get; set; } = "In a Teams call";
     public string StatusEmoji     { get; set; } = ":headphones:";
     public bool   Enabled         { get; set; } = true;
+    public bool   NotificationsEnabled { get; set; } = true;
     public DateTime? SnoozedUntil { get; set; }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ class Config
         StatusText    = StatusText,
         StatusEmoji   = StatusEmoji,
         Enabled       = Enabled,
+        NotificationsEnabled = NotificationsEnabled,
         SnoozedUntil  = SnoozedUntil,
     };
 }

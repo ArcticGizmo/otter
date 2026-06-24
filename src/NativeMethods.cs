@@ -63,6 +63,57 @@ static class NativeMethods
         return result;
     }
 
+    // ── Dark title bar ─────────────────────────────────────────────────────────
+    // Opts a window's non-client area (title bar, border) into the system dark theme so a
+    // WinForms form matches Otter's dark content. Best-effort: silently no-ops on builds that
+    // don't support the attribute.
+
+    [DllImport("dwmapi.dll")]
+    static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+    public static void UseDarkTitleBar(IntPtr hwnd)
+    {
+        int enabled = 1;
+        // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE on Win10 20H1+/Win11; 19 on earlier 20xx builds.
+        if (DwmSetWindowAttribute(hwnd, 20, ref enabled, sizeof(int)) != 0)
+            DwmSetWindowAttribute(hwnd, 19, ref enabled, sizeof(int));
+    }
+
+    // ── Dark scrollbars ──────────────────────────────────────────────────────────
+    // Opting the app into dark mode (uxtheme ordinal #135) then applying the explorer dark theme
+    // to a scrolling control gives it the dark non-client scrollbar instead of the default light
+    // one. Best-effort: unsupported on builds older than Win10 1809.
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
+
+    [DllImport("uxtheme.dll", EntryPoint = "#135", SetLastError = true)]
+    static extern int SetPreferredAppMode(int appMode);
+
+    static bool _darkAppModeSet;
+
+    public static void UseDarkScrollBars(IntPtr hWnd)
+    {
+        try
+        {
+            if (!_darkAppModeSet)
+            {
+                SetPreferredAppMode(1); // PreferredAppMode.AllowDark
+                _darkAppModeSet = true;
+            }
+            SetWindowTheme(hWnd, "DarkMode_Explorer", null);
+        }
+        catch { }
+    }
+
+    // ── Tray icon ──────────────────────────────────────────────────────────────────
+    // Frees a GDI icon handle created with Bitmap.GetHicon, so swapping the tray icon doesn't
+    // leak a handle on every state change.
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
     // ── Enums ─────────────────────────────────────────────────────────────────
 
     enum EDataFlow { eRender, eCapture, eAll }

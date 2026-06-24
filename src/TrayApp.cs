@@ -7,6 +7,7 @@ class TrayApp : IDisposable
 {
     Config _config;
     bool _slackStatusSet;
+    bool _settingsOpen;
     SlackClient.SlackStatus? _previousStatus;
 
     readonly NotifyIcon _tray;
@@ -15,7 +16,16 @@ class TrayApp : IDisposable
     // Menu items updated dynamically
     readonly ToolStripMenuItem _statusItem;
     readonly ToolStripMenuItem _enabledItem;
+    readonly ToolStripMenuItem _notificationsItem;
     readonly ToolStripMenuItem _clearSnoozeItem;
+
+    // The app icon (brown otter on the accent tile) used as the tray icon base.
+    readonly Bitmap? _otterArt = Ui.LoadEmbeddedBitmap("Otter.icon.png");
+
+    // GDI handle backing the current tray icon. Icon.FromHandle doesn't own the HICON that
+    // Bitmap.GetHicon creates, so we track it and DestroyIcon it ourselves to avoid a handle leak
+    // every time the icon changes.
+    IntPtr _trayHicon;
 
     public TrayApp()
     {
@@ -26,12 +36,24 @@ class TrayApp : IDisposable
 
         // ── Context menu ──────────────────────────────────────────────────────
 
-        _statusItem = new ToolStripMenuItem("● Monitoring") { Enabled = false };
+        // Non-interactive status header — a bold label with a colour-coded state dot in the image
+        // margin. Tag "header" tells the renderer to skip the hover highlight.
+        _statusItem = new ToolStripMenuItem("Monitoring")
+        {
+            Tag  = "header",
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Point),
+        };
 
         _enabledItem = new ToolStripMenuItem("Enabled", null, OnToggleEnabled)
         {
             CheckOnClick = true,
             Checked      = _config.Enabled,
+        };
+
+        _notificationsItem = new ToolStripMenuItem("Show notifications", null, OnToggleNotifications)
+        {
+            CheckOnClick = true,
+            Checked      = _config.NotificationsEnabled,
         };
 
         _clearSnoozeItem = new ToolStripMenuItem("Clear snooze", null, OnClearSnooze);
@@ -50,11 +72,13 @@ class TrayApp : IDisposable
             new ToolStripSeparator(),
             _enabledItem,
             snoozeMenu,
+            _notificationsItem,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Settings…", null, OnOpenSettings),
             new ToolStripSeparator(),
             new ToolStripMenuItem("Quit", null, (_, _) => Application.Exit()),
         });
+        TrayMenu.ApplyDark(menu);
 
         _tray = new NotifyIcon
         {
@@ -62,7 +86,8 @@ class TrayApp : IDisposable
             ContextMenuStrip = menu,
             Visible          = true,
         };
-        _tray.DoubleClick += OnOpenSettings;
+        // Left-click opens settings (more intuitive); right-click still shows the context menu.
+        _tray.MouseClick += OnTrayMouseClick;
 
         Application.ApplicationExit += OnApplicationExit;
 
@@ -84,7 +109,8 @@ class TrayApp : IDisposable
         {
             if (!IsActive) return;
             _ = SetSlackStatusAsync();
-            _tray.ShowBalloonTip(3_000, "Otter", "Teams call detected — updating Slack status.", ToolTipIcon.Info);
+            if (_config.NotificationsEnabled)
+                _tray.ShowBalloonTip(3_000, "Otter", "Teams call detected — updating Slack status.", ToolTipIcon.Info);
             RefreshUI();
         });
     }
@@ -131,15 +157,37 @@ class TrayApp : IDisposable
         RefreshUI();
     }
 
+    void OnToggleNotifications(object? s, EventArgs e)
+    {
+        _config.NotificationsEnabled = _notificationsItem.Checked;
+        _config.Save();
+    }
+
+    // Open settings on a left-click only — a right-click is reserved for the context menu, which the
+    // NotifyIcon shows itself.
+    void OnTrayMouseClick(object? s, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+            OnOpenSettings(s, e);
+    }
+
     void OnOpenSettings(object? s, EventArgs e)
     {
-        using var form = new SettingsWindow(_config);
-        if (form.ShowDialog() != DialogResult.OK) return;
+        // ShowDialog runs a nested message loop, so a second tray click could otherwise re-enter and
+        // stack another window on top. Guard against it.
+        if (_settingsOpen) return;
+        _settingsOpen = true;
+        try
+        {
+            using var form = new SettingsWindow(_config);
+            if (form.ShowDialog() != DialogResult.OK) return;
 
-        _config = form.Result;
-        _config.Save();
-        _enabledItem.Checked = _config.Enabled;
-        RefreshUI();
+            _config = form.Result;
+            _config.Save();
+            _enabledItem.Checked = _config.Enabled;
+            RefreshUI();
+        }
+        finally { _settingsOpen = false; }
     }
 
     void OnApplicationExit(object? s, EventArgs e)
@@ -204,71 +252,88 @@ class TrayApp : IDisposable
 
     // ── UI refresh ────────────────────────────────────────────────────────────
 
+    // Otter's current operating state, driving both the tray icon colour and the menu header.
+    OtterState CurrentState =>
+        !_config.Enabled   ? OtterState.Disabled :
+        IsSnoozed          ? OtterState.Snoozed  :
+        _monitor.IsInCall  ? OtterState.InCall   :
+                             OtterState.Monitoring;
+
     void RefreshUI()
     {
-        // Determine visual state
-        string label;
-        Color  dot;
-        string tooltip;
+        var state = CurrentState;
+        var color = Theme.StatusColor(state);
 
-        if (!_config.Enabled)
+        string label, tooltip;
+        switch (state)
         {
-            label   = "Disabled";
-            dot     = Color.Silver;
-            tooltip = "Otter — disabled";
-        }
-        else if (IsSnoozed)
-        {
-            var until = _config.SnoozedUntil!.Value.ToLocalTime();
-            label   = $"Snoozed until {until:h:mm tt}";
-            dot     = Color.SteelBlue;
-            tooltip = $"Otter — snoozed until {until:h:mm tt}";
-        }
-        else if (_monitor.IsInCall)
-        {
-            label   = "On a Teams call";
-            dot     = Color.OrangeRed;
-            tooltip = "Otter — on a call";
-        }
-        else
-        {
-            label   = "Monitoring";
-            dot     = Color.LimeGreen;
-            tooltip = "Otter — monitoring";
+            case OtterState.Disabled:
+                label = "Disabled";        tooltip = "Otter — disabled"; break;
+            case OtterState.Snoozed:
+                var until = _config.SnoozedUntil!.Value.ToLocalTime();
+                label = $"Snoozed until {until:h:mm tt}"; tooltip = $"Otter — snoozed until {until:h:mm tt}"; break;
+            case OtterState.InCall:
+                label = "On a Teams call"; tooltip = "Otter — on a call"; break;
+            default:
+                label = "Monitoring";      tooltip = "Otter — monitoring"; break;
         }
 
-        _statusItem.Text = $"● {label}";
+        // Header: bold label with a colour-coded state dot in the image margin.
+        _statusItem.Text = label;
+        var oldImg = _statusItem.Image;
+        _statusItem.Image = TrayMenu.DotImage(color);
+        oldImg?.Dispose();
+
         _clearSnoozeItem.Enabled = IsSnoozed;
 
-        // Replace tray icon
-        var oldIcon = _tray.Icon;
-        _tray.Icon  = CreateDotIcon(dot);
-        oldIcon?.Dispose();
+        UpdateTrayIcon(color);
 
         // NotifyIcon.Text is capped at 63 characters
         _tray.Text = tooltip.Length > 63 ? tooltip[..63] : tooltip;
     }
 
-    static Icon CreateDotIcon(Color color)
+    // Draws the otter app icon with a small state-colour badge in the corner, and swaps it onto the
+    // tray — freeing the previous GDI handle. The badge keeps the operating state readable at a
+    // glance now that the icon itself is the otter rather than a plain state dot.
+    void UpdateTrayIcon(Color color)
     {
-        using var bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
-        using var g   = Graphics.FromImage(bmp);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.Clear(Color.Transparent);
+        const int s = 32;
+        using var bmp = new Bitmap(s, s, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode     = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode   = PixelOffsetMode.HighQuality;
+            g.Clear(Color.Transparent);
 
-        using var fill = new SolidBrush(color);
-        g.FillEllipse(fill, 1, 1, 13, 13);
+            if (_otterArt != null)
+                g.DrawImage(_otterArt, new Rectangle(0, 0, s, s));
+            else
+            {
+                using var baseFill = new SolidBrush(color);
+                g.FillEllipse(baseFill, 1, 1, s - 2, s - 2);
+            }
 
-        // Subtle shadow ring
-        using var ring = new Pen(Color.FromArgb(60, 0, 0, 0), 1f);
-        g.DrawEllipse(ring, 1, 1, 13, 13);
+            // State badge, bottom-right, with a dark ring so it reads on the icon and the taskbar.
+            float d  = s * 0.40f;
+            float bx = s - d - s * 0.04f, by = s - d - s * 0.04f;
+            float r  = s * 0.06f;
+            using var ring = new SolidBrush(Color.FromArgb(235, 18, 18, 24));
+            g.FillEllipse(ring, bx - r, by - r, d + 2 * r, d + 2 * r);
+            using var fill = new SolidBrush(color);
+            g.FillEllipse(fill, bx, by, d, d);
+        }
 
-        // Sheen highlight
-        using var shine = new SolidBrush(Color.FromArgb(80, 255, 255, 255));
-        g.FillEllipse(shine, 4, 3, 6, 4);
+        var hicon    = bmp.GetHicon();
+        var newIcon  = Icon.FromHandle(hicon);
+        var oldIcon  = _tray.Icon;
+        var oldHicon = _trayHicon;
 
-        var hIcon = bmp.GetHicon();
-        return Icon.FromHandle(hIcon);
+        _tray.Icon = newIcon;
+        _trayHicon = hicon;
+
+        oldIcon?.Dispose();
+        if (oldHicon != IntPtr.Zero) NativeMethods.DestroyIcon(oldHicon);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -286,6 +351,9 @@ class TrayApp : IDisposable
         _monitor.Dispose();
         _tray.Visible = false;
         _tray.Icon?.Dispose();
+        if (_trayHicon != IntPtr.Zero) NativeMethods.DestroyIcon(_trayHicon);
+        _statusItem.Image?.Dispose();
+        _otterArt?.Dispose();
         _tray.Dispose();
     }
 }
