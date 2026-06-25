@@ -7,7 +7,6 @@ class Config
 {
     public string SlackToken    { get; set; } = "";
     public string SlackTeamName { get; set; } = "";
-    public string SlackClientId { get; set; } = "";
     public string StatusText      { get; set; } = "In a Teams call";
     public string StatusEmoji     { get; set; } = ":headphones:";
     public bool   Enabled         { get; set; } = true;

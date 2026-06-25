@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otter — Connected to Slack</title>
+<style>
+  :root {
+    --bg:#181820; --card:#121218; --fg:#e1e1eb; --title:#f5f5fa;
+    --muted:#8c8ca0; --accent:#60a5fa; --accent-hover:#93c5fd;
+    --green:#22c55e; --border:#2d2d3c;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body {
+    background:var(--bg); color:var(--fg);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card {
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:40px 36px; max-width:420px; width:100%; text-align:center;
+    box-shadow:0 12px 40px rgba(0,0,0,.45);
+  }
+  .otter { font-size:56px; line-height:1; margin-bottom:8px; }
+  .check { color:var(--green); }
+  h1 { color:var(--title); font-size:22px; font-weight:600; margin:12px 0 6px; }
+  p { color:var(--muted); font-size:14.5px; line-height:1.5; margin:0 0 8px; }
+  .btn {
+    display:inline-block; margin-top:20px; padding:11px 22px;
+    background:var(--accent); color:#0b1220; font-size:14.5px; font-weight:600;
+    border:none; border-radius:9px; cursor:pointer; text-decoration:none;
+  }
+  .btn:hover { background:var(--accent-hover); }
+  .hint { margin-top:18px; font-size:12.5px; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="otter">🦦</div>
+    <h1><span class="check">✓</span> Connected to Slack</h1>
+    <p>Otter is finishing up — you can close this tab and return to the app.</p>
+    <a id="open" class="btn" href="#">Open Otter</a>
+    <p class="hint">If Otter didn't open, click the button above.</p>
+  </div>
+
+  <script>
+    // Hand the OAuth result (?code=…&state=…) back to the desktop app via its custom scheme.
+    // Slack redirected the browser here over HTTPS (which satisfies app-distribution rules); this
+    // page just bounces the same query string into otter://callback, which launches Otter.
+    var target = "otter://callback" + window.location.search;
+    document.getElementById("open").setAttribute("href", target);
+    // Auto-launch on load. Navigating to a custom scheme hands off to the OS without unloading this
+    // page, so the confirmation message stays put. The button is the fallback if the browser blocks
+    // the automatic launch (some require a user gesture).
+    window.location.href = target;
+  </script>
+</body>
+</html>

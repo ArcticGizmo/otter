@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -11,7 +10,25 @@ namespace Otter;
 static class SlackClient
 {
     static readonly HttpClient Http = new();
-    const int OAuthPort = 47891;
+
+    // Otter's own Slack app, set up for public distribution. The Client ID is not a secret — it's safe
+    // to ship in the binary — and the PKCE flow below needs no client secret. The redirect is a custom
+    // URI scheme (a "desktop redirect"), which is what lets a distributed app skip the HTTPS-redirect
+    // requirement that blocks http://localhost.
+    // TODO: paste the Client ID from api.slack.com/apps → Otter → Basic Information before shipping.
+    const string ClientId = "5734148946098.11276600362966";
+
+    // Slack redirects the browser here over HTTPS — this is the URL registered on the Slack app and the
+    // one the token exchange below must echo back. The page (docs/connected.html, served via GitHub
+    // Pages) shows a "connected" confirmation and bounces the query string into otter://callback, which
+    // launches Otter; the otter:// scheme itself is never registered with Slack.
+    // TODO: set this to where docs/connected.html is published before shipping.
+    const string RedirectUri = "https://YOUR-GITHUB-USERNAME.github.io/otter/connected.html";
+
+    // The OAuth callback arrives out-of-band (Windows relaunches us via the otter:// scheme, see
+    // IpcServer), so the in-flight flow parks a completion source here for the callback to resolve.
+    static TaskCompletionSource<Uri>? _pendingCallback;
+    static readonly object _pendingLock = new();
 
     // ── Status ────────────────────────────────────────────────────────────────
 
@@ -130,14 +147,23 @@ static class SlackClient
     // ── OAuth ─────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Opens the browser to Slack's auth page, waits for the local redirect,
+    /// Delivers an <c>otter://callback?...</c> URL (received via <see cref="IpcServer"/> or our own launch
+    /// args) to the OAuth flow currently awaiting it. Safe to call from any thread; a no-op when no flow
+    /// is in progress.
+    /// </summary>
+    public static void DeliverCallbackUrl(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            lock (_pendingLock) _pendingCallback?.TrySetResult(uri);
+    }
+
+    /// <summary>
+    /// Opens the browser to Slack's auth page, waits for the <c>otter://</c> redirect to be handed back,
     /// exchanges the code via PKCE (no client secret required), and returns (userToken, teamName).
     /// </summary>
-    public static async Task<(string Token, string TeamName)> RunOAuthFlowAsync(
-        string clientId, CancellationToken ct = default)
+    public static async Task<(string Token, string TeamName)> RunOAuthFlowAsync(CancellationToken ct = default)
     {
         var state = Guid.NewGuid().ToString("N");
-        var redirectUri = $"http://localhost:{OAuthPort}/callback";
 
         // PKCE: generate verifier + challenge so no client secret is needed
         var verifierBytes = new byte[32];
@@ -146,16 +172,21 @@ static class SlackClient
         var codeChallenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
 
         var authUrl = "https://slack.com/oauth/v2/authorize"
-            + $"?client_id={Uri.EscapeDataString(clientId)}"
+            + $"?client_id={Uri.EscapeDataString(ClientId)}"
             + "&user_scope=users.profile%3Awrite%2Cusers.profile%3Aread%2Cemoji%3Aread"
-            + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
+            + $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}"
             + $"&state={state}"
             + $"&code_challenge={codeChallenge}"
             + "&code_challenge_method=S256";
 
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://localhost:{OAuthPort}/");
-        listener.Start();
+        // Park a completion source for the callback (delivered via DeliverCallbackUrl). Only one connect
+        // can be pending at a time, so cancel any earlier attempt that's somehow still waiting.
+        var tcs = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_pendingLock)
+        {
+            _pendingCallback?.TrySetCanceled();
+            _pendingCallback = tcs;
+        }
 
         // Open the user's browser
         Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
@@ -164,50 +195,39 @@ static class SlackClient
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         using var linked  = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
 
-        HttpListenerContext context;
+        Uri callback;
         try
         {
-            context = await listener.GetContextAsync().WaitAsync(linked.Token);
+            callback = await tcs.Task.WaitAsync(linked.Token);
         }
         catch (OperationCanceledException)
         {
-            listener.Stop();
-            throw new TimeoutException("Slack OAuth timed out — the browser was not completed in time.");
+            throw new TimeoutException("Slack OAuth timed out — the browser sign-in wasn't completed in time.");
         }
-
-        // Capture query string before stopping the listener (Stop() disposes the request)
-        var qs = context.Request.QueryString;
-
-        // Respond to browser, then stop
-        try
+        finally
         {
-            var html = Encoding.UTF8.GetBytes(
-                "<html><head><title>Otter</title></head><body style='font-family:sans-serif;padding:40px'>" +
-                "<h2>✅ Connected to Slack!</h2><p>You can close this tab and return to Otter.</p></body></html>");
-            context.Response.ContentType     = "text/html; charset=utf-8";
-            context.Response.ContentLength64 = html.Length;
-            await context.Response.OutputStream.WriteAsync(html);
-            context.Response.Close();
+            lock (_pendingLock) { if (_pendingCallback == tcs) _pendingCallback = null; }
         }
-        catch { /* browser closed before we could respond — non-fatal */ }
-        finally { listener.Stop(); }
 
-        if (qs["error"] is string err)
+        var qs = ParseQuery(callback.Query);
+
+        if (qs.TryGetValue("error", out var err))
             throw new InvalidOperationException($"Slack returned an error: {err}");
 
-        if (qs["state"] != state)
+        if (!qs.TryGetValue("state", out var returnedState) || returnedState != state)
             throw new InvalidOperationException("OAuth state mismatch — possible CSRF attempt.");
 
-        var code = qs["code"] ?? throw new InvalidOperationException("No code in OAuth callback.");
+        var code = qs.TryGetValue("code", out var c) && c.Length > 0
+            ? c : throw new InvalidOperationException("No code in OAuth callback.");
 
         // Exchange code → token using PKCE verifier instead of client secret
         var tokenResp = await Http.PostAsync(
             "https://slack.com/api/oauth.v2.access",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["client_id"]     = clientId,
+                ["client_id"]     = ClientId,
                 ["code"]          = code,
-                ["redirect_uri"]  = redirectUri,
+                ["redirect_uri"]  = RedirectUri,
                 ["code_verifier"] = codeVerifier,
             }));
 
@@ -222,6 +242,20 @@ static class SlackClient
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // Parses a URL query string ("?a=1&b=2") into a map, URL-decoding keys and values. Used instead of
+    // HttpListener's QueryString now that the callback arrives as a bare otter:// URI.
+    static Dictionary<string, string> ParseQuery(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq < 0) result[Uri.UnescapeDataString(part)] = "";
+            else        result[Uri.UnescapeDataString(part[..eq])] = Uri.UnescapeDataString(part[(eq + 1)..]);
+        }
+        return result;
+    }
 
     static string Base64UrlEncode(byte[] data) =>
         Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');

@@ -33,7 +33,6 @@ class SettingsWindow : Form
     readonly FluidLayout _fluid;
 
     // Slack Workspace section (on the Getting started page).
-    TextBox _clientIdBox   = null!;
     Label   _connStatus    = null!;
     Button  _connectBtn    = null!;
     Button  _disconnectBtn = null!;
@@ -167,9 +166,6 @@ class SettingsWindow : Form
         var emoji = _emojiBox?.Text.Trim();
         if (emoji != null && emoji != _config.StatusEmoji) { _config.StatusEmoji = emoji; changed = true; }
 
-        var clientId = _clientIdBox?.Text.Trim();
-        if (clientId != null && clientId != _config.SlackClientId) { _config.SlackClientId = clientId; changed = true; }
-
         if (changed) Commit();
     }
 
@@ -287,11 +283,9 @@ class SettingsWindow : Form
 
         page.Controls.Add(Ui.SectionTitle("Slack Workspace"));
 
-        page.Controls.Add(Ui.FieldCaption("Client ID"));
-        _clientIdBox = Ui.MakeTextBox(_config.SlackClientId);
-        _clientIdBox.Leave += (_, _) => CommitPendingEdits();
-        _fluid.AddWidth(_clientIdBox);
-        page.Controls.Add(_clientIdBox);
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Connect Otter to your Slack workspace. Your browser opens for sign-in — approve Otter and " +
+            "you're done; nothing to copy or paste."));
 
         _connStatus = new Label
         {
@@ -575,26 +569,15 @@ class SettingsWindow : Form
 
     async void OnConnect(object? s, EventArgs e)
     {
-        var clientId = _clientIdBox.Text.Trim();
-        if (string.IsNullOrEmpty(clientId))
-        {
-            MessageBox.Show(
-                "Enter your Slack app's Client ID first.\n\n" +
-                "Get it from api.slack.com/apps → your app → Basic Information.",
-                "Otter", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
         _connectBtn.Enabled = false;
         _disconnectBtn.Enabled = false;
         _connSpinner.Spinning = true;
 
         try
         {
-            var (token, teamName) = await SlackClient.RunOAuthFlowAsync(clientId);
+            var (token, teamName) = await SlackClient.RunOAuthFlowAsync();
             _config.SlackToken    = token;
             _config.SlackTeamName = teamName;
-            _config.SlackClientId = clientId;
             Commit();
 
             // The new token now carries emoji:read — pull the workspace emoji straight away so
