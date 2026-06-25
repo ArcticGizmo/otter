@@ -54,7 +54,7 @@ class SettingsWindow : Form
     Label        _snoozeStatus   = null!;
     Button       _clearSnoozeBtn = null!;
 
-    // Automation page.
+    // Start-at-login toggle (on the Getting started page).
     ToggleSwitch _runAtLoginToggle = null!;
 
     public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze)
@@ -138,7 +138,6 @@ class SettingsWindow : Form
         AddPage("integrations",  "Integrations",    BuildIntegrationsPage);
         AddPage("teams",         "Microsoft Teams", BuildTeamsPage, nested: true);
         AddPage("snooze",        "Snooze",          BuildSnoozePage);
-        AddPage("automation",    "Automation",      BuildAutomationPage);
         AddPage("about",         "About",           BuildAboutPage);
 
         Controls.Add(_contentHost); // Fill added first…
@@ -311,6 +310,18 @@ class SettingsWindow : Form
         row.Controls.Add(_disconnectBtn);
         row.Controls.Add(_connSpinner);
         page.Controls.Add(row);
+
+        page.Controls.Add(Ui.Separator(_fluid));
+
+        _runAtLoginToggle = Ui.MakeToggle();
+        _runAtLoginToggle.Checked = Startup.IsEnabled();
+        // Run-at-login lives in the registry, not Config, so apply it straight away on toggle.
+        _runAtLoginToggle.CheckedChanged += (_, _) => Startup.SetEnabled(_runAtLoginToggle.Checked);
+        page.Controls.Add(Ui.TitleRow(_fluid, "Start at login", _runAtLoginToggle));
+
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Launch Otter in the background when you sign in to Windows, so your Slack status is " +
+            "managed without you having to start it yourself."));
     }
 
     // Centred app banner: logo (when present), the app name, and the tagline.
@@ -494,23 +505,6 @@ class SettingsWindow : Form
             _snoozeStatus.ForeColor = Theme.Muted;
         }
         _clearSnoozeBtn.Enabled = snoozed;
-    }
-
-    // ── Automation ────────────────────────────────────────────────────────────────
-    void BuildAutomationPage(FlowLayoutPanel page)
-    {
-        _runAtLoginToggle = Ui.MakeToggle();
-        _runAtLoginToggle.Checked = Startup.IsEnabled();
-        // Run-at-login lives in the registry, not Config, so apply it straight away on toggle.
-        _runAtLoginToggle.CheckedChanged += (_, _) => Startup.SetEnabled(_runAtLoginToggle.Checked);
-        page.Controls.Add(Ui.TitleRow(_fluid, "Start at login", _runAtLoginToggle));
-
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Launch Otter in the background when you sign in to Windows, so your Slack status is " +
-            "managed without you having to start it yourself."));
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Otter registers its current location. If you move or reinstall the app, toggle this off " +
-            "and on again to refresh it."));
     }
 
     // ── About ───────────────────────────────────────────────────────────────────────
