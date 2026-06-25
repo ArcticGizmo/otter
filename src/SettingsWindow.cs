@@ -3,7 +3,7 @@ namespace Otter;
 /// <summary>
 /// Otter's first-class settings window: a dark, resizable shell split into a fixed-width left
 /// navigation rail and a fluid content area. The nav switches between pages — Getting started,
-/// Slack, Status, and About — built entirely from the <see cref="Ui"/> control factory so they stay
+/// Status, Snooze, and About — built entirely from the <see cref="Ui"/> control factory so they stay
 /// visually consistent. Edits apply directly to the live <see cref="Config"/> and persist as the
 /// user makes them — text fields commit when focus leaves, toggles and the Slack connection commit
 /// instantly — so there is no Save/Cancel step. Each commit invokes <c>onChanged</c> so the caller
@@ -31,7 +31,7 @@ class SettingsWindow : Form
 
     readonly FluidLayout _fluid;
 
-    // Slack page.
+    // Slack Workspace section (on the Getting started page).
     TextBox _clientIdBox   = null!;
     Label   _connStatus    = null!;
     Button  _connectBtn    = null!;
@@ -48,9 +48,6 @@ class SettingsWindow : Form
     // and the status preview.
     readonly EmojiStore _emojiStore = new();
     EmojiAutocomplete? _emojiAutocomplete;
-
-    // Getting started echoes the same connection line.
-    Label _startConn = null!;
 
     // Snooze page.
     Label        _snoozeStatus   = null!;
@@ -131,7 +128,6 @@ class SettingsWindow : Form
         _contentHost.Resize += (_, _) => _fluid.Apply();
 
         AddPage("start",         "Getting started", BuildGettingStartedPage);
-        AddPage("slack",         "Slack",           BuildSlackPage);
         AddPage("status",        "Status",          BuildStatusPage);
         AddPage("snooze",        "Snooze",          BuildSnoozePage);
         AddPage("automation",    "Automation",      BuildAutomationPage);
@@ -260,9 +256,37 @@ class SettingsWindow : Form
 
         page.Controls.Add(Ui.Separator(_fluid));
 
-        page.Controls.Add(Ui.SectionTitle("Connection"));
-        _startConn = Ui.BodyText(_fluid, "");
-        page.Controls.Add(_startConn);
+        page.Controls.Add(Ui.SectionTitle("Slack Workspace"));
+
+        page.Controls.Add(Ui.FieldCaption("Client ID"));
+        _clientIdBox = Ui.MakeTextBox(_config.SlackClientId);
+        _clientIdBox.Leave += (_, _) =>
+        {
+            var clientId = _clientIdBox.Text.Trim();
+            if (clientId == _config.SlackClientId) return;
+            _config.SlackClientId = clientId;
+            Commit();
+        };
+        _fluid.AddWidth(_clientIdBox);
+        page.Controls.Add(_clientIdBox);
+
+        _connStatus = new Label
+        {
+            AutoSize = true,
+            Margin   = new Padding(0, 2, 0, 8),
+        };
+        page.Controls.Add(_connStatus);
+
+        var row = Ui.ButtonRow();
+        _connectBtn = Ui.MakeButton("Connect Slack");
+        _connectBtn.Click += OnConnect;
+        _disconnectBtn = Ui.MakeButton("Disconnect");
+        _disconnectBtn.Click += OnDisconnect;
+        _connSpinner = new Spinner { Margin = new Padding(2, 6, 0, 0) };
+        row.Controls.Add(_connectBtn);
+        row.Controls.Add(_disconnectBtn);
+        row.Controls.Add(_connSpinner);
+        page.Controls.Add(row);
     }
 
     // Centred app banner: logo (when present), the app name, and the tagline.
@@ -304,49 +328,6 @@ class SettingsWindow : Form
         Layout();
 
         page.Controls.Add(banner);
-    }
-
-    // ── Slack ───────────────────────────────────────────────────────────────────────
-    void BuildSlackPage(FlowLayoutPanel page)
-    {
-        page.Controls.Add(Ui.SectionTitle("Slack connection"));
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Otter connects to your Slack workspace with your app's Client ID using a secure browser " +
-            "sign-in (PKCE) — no client secret is stored."));
-
-        page.Controls.Add(Ui.FieldCaption("Client ID"));
-        _clientIdBox = Ui.MakeTextBox(_config.SlackClientId);
-        _clientIdBox.Leave += (_, _) =>
-        {
-            var clientId = _clientIdBox.Text.Trim();
-            if (clientId == _config.SlackClientId) return;
-            _config.SlackClientId = clientId;
-            Commit();
-        };
-        _fluid.AddWidth(_clientIdBox);
-        page.Controls.Add(_clientIdBox);
-
-        _connStatus = new Label
-        {
-            AutoSize = true,
-            Margin   = new Padding(0, 2, 0, 8),
-        };
-        page.Controls.Add(_connStatus);
-
-        var row = Ui.ButtonRow();
-        _connectBtn = Ui.MakeButton("Connect Slack");
-        _connectBtn.Click += OnConnect;
-        _disconnectBtn = Ui.MakeButton("Disconnect");
-        _disconnectBtn.Click += OnDisconnect;
-        _connSpinner = new Spinner { Margin = new Padding(2, 6, 0, 0) };
-        row.Controls.Add(_connectBtn);
-        row.Controls.Add(_disconnectBtn);
-        row.Controls.Add(_connSpinner);
-        page.Controls.Add(row);
-
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Get your Client ID from api.slack.com/apps → your app → Basic Information. Add the redirect " +
-            "URL shown in Otter's docs and the users.profile scopes before connecting."));
     }
 
     // ── Status ────────────────────────────────────────────────────────────────────────
@@ -575,12 +556,6 @@ class SettingsWindow : Form
             _connectBtn.Text      = "Connect Slack";
         }
         _disconnectBtn.Enabled = connected;
-
-        if (_startConn != null)
-        {
-            _startConn.Text      = connected ? $"Connected to {_config.SlackTeamName}." : "Not connected yet — set up Slack on the Slack page.";
-            _startConn.ForeColor = connected ? Theme.Fg : Theme.Muted;
-        }
     }
 
     async void OnConnect(object? s, EventArgs e)
