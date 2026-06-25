@@ -3,7 +3,8 @@ namespace Otter;
 /// <summary>
 /// Otter's first-class settings window: a dark, resizable shell split into a fixed-width left
 /// navigation rail and a fluid content area. The nav switches between pages — Getting started,
-/// Status, Snooze, and About — built entirely from the <see cref="Ui"/> control factory so they stay
+/// Integrations (with Microsoft Teams nested beneath), Snooze, and About — built entirely from the
+/// <see cref="Ui"/> control factory so they stay
 /// visually consistent. Edits apply directly to the live <see cref="Config"/> and persist as the
 /// user makes them — text fields commit when focus leaves, toggles and the Slack connection commit
 /// instantly — so there is no Save/Cancel step. Each commit invokes <c>onChanged</c> so the caller
@@ -111,6 +112,12 @@ class SettingsWindow : Form
             _ = _emojiStore.RefreshAsync(_config.SlackToken);
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        CommitPendingEdits();   // closing the window doesn't blur the active field — flush it first
+        base.OnFormClosing(e);
+    }
+
     // ── Shell ─────────────────────────────────────────────────────────────────────
     void BuildLayout()
     {
@@ -128,7 +135,8 @@ class SettingsWindow : Form
         _contentHost.Resize += (_, _) => _fluid.Apply();
 
         AddPage("start",         "Getting started", BuildGettingStartedPage);
-        AddPage("status",        "Status",          BuildStatusPage);
+        AddPage("integrations",  "Integrations",    BuildIntegrationsPage);
+        AddPage("teams",         "Microsoft Teams", BuildTeamsPage, nested: true);
         AddPage("snooze",        "Snooze",          BuildSnoozePage);
         AddPage("automation",    "Automation",      BuildAutomationPage);
         AddPage("about",         "About",           BuildAboutPage);
@@ -147,8 +155,28 @@ class SettingsWindow : Form
         _onChanged();
     }
 
-    // Builds a page panel, runs its content builder, and registers the matching nav item.
-    void AddPage(string key, string title, Action<FlowLayoutPanel> build)
+    // Flushes text the user typed but hasn't blurred out of yet. TextBox.Leave commits on focus change,
+    // but the nav labels aren't focusable — so clicking another page or the window's close button never
+    // blurs the active field, and without this the pending edit would be lost. Commits only on a change.
+    void CommitPendingEdits()
+    {
+        bool changed = false;
+
+        var text = _statusTextBox?.Text.Trim();
+        if (text != null && text != _config.StatusText) { _config.StatusText = text; changed = true; }
+
+        var emoji = _emojiBox?.Text.Trim();
+        if (emoji != null && emoji != _config.StatusEmoji) { _config.StatusEmoji = emoji; changed = true; }
+
+        var clientId = _clientIdBox?.Text.Trim();
+        if (clientId != null && clientId != _config.SlackClientId) { _config.SlackClientId = clientId; changed = true; }
+
+        if (changed) Commit();
+    }
+
+    // Builds a page panel, runs its content builder, and registers the matching nav item. Pass
+    // nested: true for a child entry (indented beneath the preceding top-level item).
+    void AddPage(string key, string title, Action<FlowLayoutPanel> build, bool nested = false)
     {
         var page = new FlowLayoutPanel
         {
@@ -163,16 +191,17 @@ class SettingsWindow : Form
         build(page);
         _pages[key] = page;
         _contentHost.Controls.Add(page);
-        AddNavItem(key, title);
+        AddNavItem(key, title, nested);
     }
 
     // A single nav rail entry: a left accent bar (shown when selected) and a left-aligned label.
-    void AddNavItem(string key, string title)
+    // Nested entries sit a row shorter and indented, reading as children of the item above them.
+    void AddNavItem(string key, string title, bool nested = false)
     {
         var item = new Panel
         {
             Width     = NavWidth,
-            Height    = 42,
+            Height    = nested ? 34 : 42,
             Margin    = new Padding(0),
             Cursor    = Cursors.Hand,
             BackColor = Theme.NavBg,
@@ -183,10 +212,10 @@ class SettingsWindow : Form
             Text      = title,
             Dock      = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding   = new Padding(16, 0, 8, 0),
+            Padding   = new Padding(nested ? 34 : 16, 0, 8, 0),
             ForeColor = Theme.Muted,
             BackColor = Theme.NavBg,
-            Font      = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+            Font      = new Font("Segoe UI", nested ? 9.5f : 10f, FontStyle.Regular, GraphicsUnit.Point),
         };
         item.Controls.Add(label);
         item.Controls.Add(accent);
@@ -218,6 +247,7 @@ class SettingsWindow : Form
     void SelectPage(string key)
     {
         if (!_pages.TryGetValue(key, out var page)) return;
+        CommitPendingEdits();   // flush any unsaved text before leaving the current page
         _currentKey = key;
 
         foreach (var kv in _pages)
@@ -260,13 +290,7 @@ class SettingsWindow : Form
 
         page.Controls.Add(Ui.FieldCaption("Client ID"));
         _clientIdBox = Ui.MakeTextBox(_config.SlackClientId);
-        _clientIdBox.Leave += (_, _) =>
-        {
-            var clientId = _clientIdBox.Text.Trim();
-            if (clientId == _config.SlackClientId) return;
-            _config.SlackClientId = clientId;
-            Commit();
-        };
+        _clientIdBox.Leave += (_, _) => CommitPendingEdits();
         _fluid.AddWidth(_clientIdBox);
         page.Controls.Add(_clientIdBox);
 
@@ -330,8 +354,17 @@ class SettingsWindow : Form
         page.Controls.Add(banner);
     }
 
-    // ── Status ────────────────────────────────────────────────────────────────────────
-    void BuildStatusPage(FlowLayoutPanel page)
+    // ── Integrations ────────────────────────────────────────────────────────────────
+    void BuildIntegrationsPage(FlowLayoutPanel page)
+    {
+        page.Controls.Add(Ui.SectionTitle("Integrations"));
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Apps Otter watches to update your Slack status. Select one to configure it."));
+        page.Controls.Add(Ui.BulletText(_fluid, "Microsoft Teams — sets your status while you're on a Teams call."));
+    }
+
+    // ── Microsoft Teams ──────────────────────────────────────────────────────────────
+    void BuildTeamsPage(FlowLayoutPanel page)
     {
         page.Controls.Add(Ui.SectionTitle("Call status"));
         page.Controls.Add(Ui.BodyText(_fluid, "What Otter sets your Slack status to while you're on a Teams call."));
@@ -340,26 +373,14 @@ class SettingsWindow : Form
         _statusTextBox = Ui.MakeTextBox(_config.StatusText);
         _fluid.AddWidth(_statusTextBox);
         _statusTextBox.TextChanged += (_, _) => UpdateStatusPreview();
-        _statusTextBox.Leave += (_, _) =>
-        {
-            var text = _statusTextBox.Text.Trim();
-            if (text == _config.StatusText) return;
-            _config.StatusText = text;
-            Commit();
-        };
+        _statusTextBox.Leave += (_, _) => CommitPendingEdits();
         page.Controls.Add(_statusTextBox);
 
         page.Controls.Add(Ui.FieldCaption("Emoji"));
         _emojiBox = Ui.MakeTextBox(_config.StatusEmoji);
         _emojiBox.Width = 220;
         _emojiBox.TextChanged += (_, _) => UpdateStatusPreview();
-        _emojiBox.Leave += (_, _) =>
-        {
-            var emoji = _emojiBox.Text.Trim();
-            if (emoji == _config.StatusEmoji) return;
-            _config.StatusEmoji = emoji;
-            Commit();
-        };
+        _emojiBox.Leave += (_, _) => CommitPendingEdits();
         // Slack-style autocomplete: type ':' + a name to pick from the workspace's custom emoji.
         _emojiAutocomplete = new EmojiAutocomplete(_emojiBox, _emojiStore);
         page.Controls.Add(_emojiBox);
