@@ -1,4 +1,5 @@
 using System.Windows.Forms;
+using Velopack;
 
 namespace Otter;
 
@@ -7,6 +8,11 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Must run before anything else: when the installer/updater relaunches us with its hook
+        // arguments, this handles install/update/uninstall and exits before we touch the UI or the
+        // single-instance mutex. In normal launches it's a no-op and returns immediately.
+        VelopackApp.Build().Run();
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         ApplicationConfiguration.Initialize();
