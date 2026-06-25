@@ -52,10 +52,9 @@ class SettingsWindow : Form
     // Getting started echoes the same connection line.
     Label _startConn = null!;
 
-    // Notifications page.
-    ToggleSwitch _notificationsToggle = null!;
-    Label        _snoozeStatus        = null!;
-    Button       _clearSnoozeBtn      = null!;
+    // Snooze page.
+    Label        _snoozeStatus   = null!;
+    Button       _clearSnoozeBtn = null!;
 
     // Automation page.
     ToggleSwitch _runAtLoginToggle = null!;
@@ -134,7 +133,7 @@ class SettingsWindow : Form
         AddPage("start",         "Getting started", BuildGettingStartedPage);
         AddPage("slack",         "Slack",           BuildSlackPage);
         AddPage("status",        "Status",          BuildStatusPage);
-        AddPage("notifications", "Notifications",   BuildNotificationsPage);
+        AddPage("snooze",        "Snooze",          BuildSnoozePage);
         AddPage("automation",    "Automation",      BuildAutomationPage);
         AddPage("about",         "About",           BuildAboutPage);
 
@@ -443,25 +442,9 @@ class SettingsWindow : Form
             _statusPreview.Text = $"{emoji}  {text}".Trim();
     }
 
-    // ── Notifications ───────────────────────────────────────────────────────────────
-    void BuildNotificationsPage(FlowLayoutPanel page)
+    // ── Snooze ──────────────────────────────────────────────────────────────────────
+    void BuildSnoozePage(FlowLayoutPanel page)
     {
-        _notificationsToggle = Ui.MakeToggle();
-        _notificationsToggle.Checked = _config.NotificationsEnabled;
-        _notificationsToggle.CheckedChanged += (_, _) =>
-        {
-            if (_notificationsToggle.Checked == _config.NotificationsEnabled) return;
-            _config.NotificationsEnabled = _notificationsToggle.Checked;
-            Commit();
-        };
-        page.Controls.Add(Ui.TitleRow(_fluid, "Show notifications", _notificationsToggle));
-
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Show a brief desktop notification when Otter detects a call and updates your Slack status. " +
-            "Turn this off to update your status silently."));
-
-        page.Controls.Add(Ui.Separator(_fluid));
-
         page.Controls.Add(Ui.SectionTitle("Snooze"));
         page.Controls.Add(Ui.BodyText(_fluid,
             "Pause Otter for a while. Your Slack status is cleared and won't be updated again until the " +

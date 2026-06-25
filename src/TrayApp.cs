@@ -16,7 +16,6 @@ class TrayApp : IDisposable
     // Menu items updated dynamically
     readonly ToolStripMenuItem _statusItem;
     readonly ToolStripMenuItem _enabledItem;
-    readonly ToolStripMenuItem _notificationsItem;
     readonly ToolStripMenuItem _clearSnoozeItem;
 
     // The app icon (brown otter on the accent tile) used as the tray icon base.
@@ -51,12 +50,6 @@ class TrayApp : IDisposable
             Checked      = _config.Enabled,
         };
 
-        _notificationsItem = new ToolStripMenuItem("Show notifications", null, OnToggleNotifications)
-        {
-            CheckOnClick = true,
-            Checked      = _config.NotificationsEnabled,
-        };
-
         _clearSnoozeItem = new ToolStripMenuItem("Clear snooze", null, OnClearSnooze);
 
         var snoozeMenu = new ToolStripMenuItem("Snooze", null,
@@ -73,7 +66,6 @@ class TrayApp : IDisposable
             new ToolStripSeparator(),
             _enabledItem,
             snoozeMenu,
-            _notificationsItem,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Settings…", null, OnOpenSettings),
             new ToolStripSeparator(),
@@ -113,15 +105,11 @@ class TrayApp : IDisposable
 
     // ── Signal events (background thread → marshal to UI) ──────────────────────
 
-    void OnActiveChanged(IStatusSignal? activeSignal)
+    void OnActiveChanged(IStatusSignal? _)
     {
         RunOnUiThread(() =>
         {
-            bool announce = activeSignal != null && IsEnabled && !_slackStatusSet && _config.NotificationsEnabled;
             ReevaluateStatus();
-            if (announce)
-                _tray.ShowBalloonTip(3_000, "Otter",
-                    $"{activeSignal!.ActiveDescription} — updating your Slack status.", ToolTipIcon.Info);
             RefreshUI();
         });
     }
@@ -161,12 +149,6 @@ class TrayApp : IDisposable
         _config.Save();
         ReevaluateStatus();
         RefreshUI();
-    }
-
-    void OnToggleNotifications(object? s, EventArgs e)
-    {
-        _config.NotificationsEnabled = _notificationsItem.Checked;
-        _config.Save();
     }
 
     // Open settings on a left-click only — a right-click is reserved for the context menu, which the
@@ -322,9 +304,8 @@ class TrayApp : IDisposable
 
         _clearSnoozeItem.Enabled = IsSnoozed;
 
-        // Keep the tray toggles in step with the live config (the settings window can change these).
-        _enabledItem.Checked       = _config.Enabled;
-        _notificationsItem.Checked = _config.NotificationsEnabled;
+        // Keep the tray toggle in step with the live config (the settings window can change it).
+        _enabledItem.Checked = _config.Enabled;
 
         UpdateTrayIcon(color);
 
