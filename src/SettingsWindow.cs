@@ -486,7 +486,7 @@ class SettingsWindow : Form
 
     void UpdateSnoozeUI()
     {
-        bool snoozed = _config.SnoozedUntil.HasValue && _config.SnoozedUntil.Value > DateTime.UtcNow;
+        bool snoozed = _config.IsSnoozed;
         if (snoozed)
         {
             var until = _config.SnoozedUntil!.Value.ToLocalTime();

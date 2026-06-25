@@ -49,12 +49,6 @@ sealed class EmojiStore : IDisposable
         LoadListFromDisk();
     }
 
-    /// <summary>True once we have any emoji to offer (from disk or a live refresh).</summary>
-    public bool HasData => _urls.Count > 0;
-
-    /// <summary>Is <paramref name="name"/> (with or without surrounding colons) a known custom emoji?</summary>
-    public bool Knows(string name) => _urls.ContainsKey(Normalize(name));
-
     // ── List ─────────────────────────────────────────────────────────────────────
 
     /// <summary>Re-fetches the catalogue from Slack and mirrors it to disk. Swallows failures (offline,

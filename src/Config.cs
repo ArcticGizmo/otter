@@ -12,6 +12,9 @@ class Config
     public bool   Enabled         { get; set; } = true;
     public DateTime? SnoozedUntil { get; set; }
 
+    [JsonIgnore]
+    public bool IsSnoozed => SnoozedUntil is { } until && until > DateTime.UtcNow;
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
     [JsonIgnore]

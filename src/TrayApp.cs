@@ -90,8 +90,7 @@ class TrayApp : IDisposable
 
     // ── State helpers ─────────────────────────────────────────────────────────
 
-    bool IsEnabled => _config.Enabled && !IsSnoozed;
-    bool IsSnoozed => _config.SnoozedUntil.HasValue && _config.SnoozedUntil.Value > DateTime.UtcNow;
+    bool IsEnabled => _config.Enabled && !_config.IsSnoozed;
 
     // Brings the Slack status in line with the current state: set it when Otter is enabled and a
     // signal is firing, clear/restore it otherwise. Idempotent, so it's safe to call from any state
@@ -134,7 +133,7 @@ class TrayApp : IDisposable
         // Auto-expire the snooze, then re-apply the status if a signal is still firing.
         _ = Task.Delay(TimeSpan.FromMinutes(minutes)).ContinueWith(_ =>
         {
-            if (IsSnoozed) return; // already manually cleared or re-snoozed further out
+            if (_config.IsSnoozed) return; // already manually cleared or re-snoozed further out
             _config.SnoozedUntil = null;
             _config.Save();
             RunOnUiThread(() => { ReevaluateStatus(); RefreshUI(); });
@@ -236,20 +235,19 @@ class TrayApp : IDisposable
         try
         {
             var prev = _previousStatus;
-
-            // If the previous status matches what Otter set (race condition / desync),
-            // treat it as empty so we don't re-apply a stale Otter status.
             var restoreText  = prev?.Text       ?? "";
             var restoreEmoji = prev?.Emoji      ?? "";
             var restoreExp   = prev?.Expiration ?? 0;
-            
+
+            // If the captured "previous" status is in fact the one Otter set (a race or desync),
+            // restoring it would re-apply our own status — clear instead.
             if (restoreText == _config.StatusText && restoreEmoji == _config.StatusEmoji)
             {
                 await SlackClient.ClearStatusAsync(_config.SlackToken);
-                return;                
+                return;
             }
-            
-            // If expiration has passed, clear status
+
+            // The status expired during the call: nothing left to restore, so clear.
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             if (restoreExp > 0 && restoreExp <= now)
             {
@@ -272,7 +270,7 @@ class TrayApp : IDisposable
     // Otter's current operating state, driving both the tray icon colour and the menu header.
     OtterState CurrentState =>
         !_config.Enabled            ? OtterState.Disabled :
-        IsSnoozed                   ? OtterState.Snoozed  :
+        _config.IsSnoozed           ? OtterState.Snoozed  :
         _coordinator.Active != null ? OtterState.Active   :
                                       OtterState.Monitoring;
 
@@ -302,7 +300,7 @@ class TrayApp : IDisposable
         _statusItem.Image = TrayMenu.DotImage(color);
         oldImg?.Dispose();
 
-        _clearSnoozeItem.Enabled = IsSnoozed;
+        _clearSnoozeItem.Enabled = _config.IsSnoozed;
 
         // Keep the tray toggle in step with the live config (the settings window can change it).
         _enabledItem.Checked = _config.Enabled;

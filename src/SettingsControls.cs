@@ -34,15 +34,6 @@ internal sealed class ToggleSwitch : Control
         }
     }
 
-    /// <summary>Set the state without raising <see cref="CheckedChanged"/> (used when syncing to
-    /// external state, so we don't re-trigger the change handler).</summary>
-    public void SetCheckedSilently(bool value)
-    {
-        if (_on == value) return;
-        _on = value;
-        Invalidate();
-    }
-
     protected override void OnMouseClick(MouseEventArgs e)
     {
         if (Enabled && e.Button == MouseButtons.Left)
@@ -158,8 +149,6 @@ internal sealed class FluidLayout
 {
     // Controls whose Width should fill the available area, minus a fixed inset.
     private readonly List<(Control c, int inset)> _width = new();
-    // Same, but the inset is computed live (for controls sharing a row with DPI-scaled siblings).
-    private readonly List<(Control c, Func<int> inset)> _widthDynamic = new();
     // AutoSize labels whose MaximumSize width is updated so they re-wrap.
     private readonly List<Label> _wrap = new();
 
@@ -168,15 +157,13 @@ internal sealed class FluidLayout
     public FluidLayout(Func<int> availableWidth) => _availableWidth = availableWidth;
 
     public T AddWidth<T>(T c, int inset = 0) where T : Control { _width.Add((c, inset)); return c; }
-    public T AddWidthDynamic<T>(T c, Func<int> inset) where T : Control { _widthDynamic.Add((c, inset)); return c; }
     public Label AddWrap(Label l) { _wrap.Add(l); return l; }
 
     public void Apply()
     {
         int w = Math.Max(200, _availableWidth());
-        foreach (var (c, inset) in _width)        c.Width = Math.Max(40, w - inset);
-        foreach (var (c, inset) in _widthDynamic) c.Width = Math.Max(40, w - inset());
-        foreach (var l in _wrap)                  l.MaximumSize = new Size(w, 0);
+        foreach (var (c, inset) in _width) c.Width = Math.Max(40, w - inset);
+        foreach (var l in _wrap)           l.MaximumSize = new Size(w, 0);
     }
 }
 
@@ -208,15 +195,6 @@ internal static class Ui
         Margin    = new Padding(0, 2, 0, 2),
     };
 
-    public static Label SubHeading(string text) => new()
-    {
-        Text      = text,
-        AutoSize  = true,
-        ForeColor = Theme.Fg,
-        Font      = new Font(FontName, 9.5f, FontStyle.Bold, GraphicsUnit.Point),
-        Margin    = new Padding(0, 6, 0, 4),
-    };
-
     // A wrapping body paragraph; registered so its wrap width tracks the content area.
     public static Label BodyText(FluidLayout fluid, string text)
     {
@@ -241,38 +219,6 @@ internal static class Ui
             MaximumSize = new Size(480, 0),
             ForeColor   = Theme.Muted,
             Margin      = new Padding(0, 0, 0, 4),
-        };
-        return fluid.AddWrap(l);
-    }
-
-    // An indented italic label for blockquote / editorial asides.
-    public static Label BlockQuote(FluidLayout fluid, string text)
-    {
-        var l = new Label
-        {
-            Text        = text,
-            AutoSize    = true,
-            MaximumSize = new Size(480, 0),
-            ForeColor   = Theme.Muted,
-            Font        = new Font(FontName, 9f, FontStyle.Italic, GraphicsUnit.Point),
-            Margin      = new Padding(12, 0, 0, 6),
-        };
-        return fluid.AddWrap(l);
-    }
-
-    // A monospace, boxed block for copy-pasteable commands.
-    public static Label CodeBlock(FluidLayout fluid, string text)
-    {
-        var l = new Label
-        {
-            Text        = text,
-            AutoSize    = true,
-            MaximumSize = new Size(480, 0),
-            Font        = new Font("Consolas", 9.5f, FontStyle.Regular, GraphicsUnit.Point),
-            ForeColor   = Theme.Fg,
-            BackColor   = Theme.CodeBg,
-            Padding     = new Padding(10, 8, 10, 8),
-            Margin      = new Padding(0, 0, 0, 8),
         };
         return fluid.AddWrap(l);
     }
@@ -380,18 +326,6 @@ internal static class Ui
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch { }
-    }
-
-    public static string? LoadEmbeddedText(string resourceName)
-    {
-        try
-        {
-            using var stream = typeof(Ui).Assembly.GetManifestResourceStream(resourceName);
-            if (stream is null) return null;
-            using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
-        }
-        catch { return null; }
     }
 
     public static Bitmap? LoadEmbeddedBitmap(string resourceName)

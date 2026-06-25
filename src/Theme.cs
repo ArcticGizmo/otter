@@ -19,13 +19,10 @@ internal static class Theme
     public static readonly Color ButtonBg    = Color.FromArgb(45, 45, 60);
     public static readonly Color ButtonHover = Color.FromArgb(60, 60, 80);
     public static readonly Color CodeBg      = Color.FromArgb(34, 34, 44);
-    public static readonly Color Danger      = Color.FromArgb(248, 113, 113);
 
     // ── Status palette ───────────────────────────────────────────────────────────
     public static readonly Color Green  = Color.FromArgb(34, 197, 94);
-    public static readonly Color Yellow = Color.FromArgb(250, 204, 21);
     public static readonly Color Orange = Color.FromArgb(251, 146, 60);
-    public static readonly Color Red    = Color.FromArgb(239, 68, 68);
 
     /// <summary>The dot/indicator colour for each of Otter's tray states. Drives both the tray icon
     /// (Phase 3) and any in-window status chips, so the two always agree.</summary>

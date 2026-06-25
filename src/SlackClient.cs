@@ -12,17 +12,13 @@ static class SlackClient
     static readonly HttpClient Http = new();
 
     // Otter's own Slack app, set up for public distribution. The Client ID is not a secret — it's safe
-    // to ship in the binary — and the PKCE flow below needs no client secret. The redirect is a custom
-    // URI scheme (a "desktop redirect"), which is what lets a distributed app skip the HTTPS-redirect
-    // requirement that blocks http://localhost.
-    // TODO: paste the Client ID from api.slack.com/apps → Otter → Basic Information before shipping.
+    // to ship in the binary — and the PKCE flow below needs no client secret.
     const string ClientId = "5734148946098.11276600362966";
 
     // Slack redirects the browser here over HTTPS — this is the URL registered on the Slack app and the
     // one the token exchange below must echo back. The page (docs/connected.html, served via GitHub
     // Pages) shows a "connected" confirmation and bounces the query string into otter://callback, which
     // launches Otter; the otter:// scheme itself is never registered with Slack.
-    // TODO: set this to where docs/connected.html is published before shipping.
     const string RedirectUri = "https://arcticgizmo.github.io/otter/connected.html";
 
     // The OAuth callback arrives out-of-band (Windows relaunches us via the otter:// scheme, see
@@ -46,12 +42,7 @@ static class SlackClient
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var root = doc.RootElement;
-
-        if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
-        {
-            var error = root.TryGetProperty("error", out var errProp) ? errProp.GetString() : "unknown";
-            throw new InvalidOperationException($"Slack API error: {error}");
-        }
+        ThrowIfSlackError(root);
 
         if (!root.TryGetProperty("profile", out var profile))
             return new SlackStatus("", "");
@@ -109,12 +100,7 @@ static class SlackClient
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var root = doc.RootElement;
-
-        if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
-        {
-            var error = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown";
-            throw new InvalidOperationException($"Slack API error: {error}");
-        }
+        ThrowIfSlackError(root);
 
         var raw = new Dictionary<string, string>(StringComparer.Ordinal);
         if (root.TryGetProperty("emoji", out var emoji) && emoji.ValueKind == JsonValueKind.Object)
@@ -262,9 +248,13 @@ static class SlackClient
 
     static async Task EnsureSlackOkAsync(HttpResponseMessage resp)
     {
-        var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        ThrowIfSlackError(doc.RootElement);
+    }
+
+    // Every Slack Web API response carries an "ok" boolean; throw with the "error" string when it's false.
+    static void ThrowIfSlackError(JsonElement root)
+    {
         if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
         {
             var error = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown";
