@@ -23,7 +23,7 @@ static class SlackClient
     // Pages) shows a "connected" confirmation and bounces the query string into otter://callback, which
     // launches Otter; the otter:// scheme itself is never registered with Slack.
     // TODO: set this to where docs/connected.html is published before shipping.
-    const string RedirectUri = "https://YOUR-GITHUB-USERNAME.github.io/otter/connected.html";
+    const string RedirectUri = "https://arcticgizmo.github.io/otter/connected.html";
 
     // The OAuth callback arrives out-of-band (Windows relaunches us via the otter:// scheme, see
     // IpcServer), so the in-flight flow parks a completion source here for the callback to resolve.
