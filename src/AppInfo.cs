@@ -8,9 +8,7 @@ using System.Reflection;
 /// </summary>
 internal static class AppInfo
 {
-    // TODO: set once Otter has a published GitHub repo (a Phase 5 prerequisite). While empty, the
-    // About page hides its repo links rather than shipping a dead 404.
-    public const string RepoUrl = "";
+    public const string RepoUrl = "https://github.com/ArcticGizmo/otter";
 
     public static string IssuesUrl => string.IsNullOrEmpty(RepoUrl) ? "" : RepoUrl + "/issues/new";
 
