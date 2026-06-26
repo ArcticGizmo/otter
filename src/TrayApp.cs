@@ -36,9 +36,10 @@ class TrayApp : IDisposable
     {
         _config = Config.Load();
 
-        // The set of "you're busy" signals. Teams is the only one today; add more here and the rest
-        // of the app (status updates, tray state) follows automatically.
-        _coordinator = new SignalCoordinator(new IStatusSignal[] { new TeamsCallSignal() });
+        // The set of "you're busy" signals. The microphone signal detects Teams calls device-agnostically
+        // (works with virtual soundcards) and is the only one today; add more here and the rest of the app
+        // (status updates, tray state) follows automatically.
+        _coordinator = new SignalCoordinator(new IStatusSignal[] { new MicrophoneInUseSignal() });
         _coordinator.ActiveChanged += OnActiveChanged;
 
         // ── Context menu ──────────────────────────────────────────────────────
