@@ -15,16 +15,26 @@ static class SlackClient
     // to ship in the binary — and the PKCE flow below needs no client secret.
     const string ClientId = "5734148946098.11276600362966";
 
-    // Slack redirects the browser here over HTTPS — this is the URL registered on the Slack app and the
-    // one the token exchange below must echo back. The page (docs/connected.html, served via GitHub
-    // Pages) shows a "connected" confirmation and bounces the query string into otter://callback, which
-    // launches Otter; the otter:// scheme itself is never registered with Slack.
-    const string RedirectUri = "https://arcticgizmo.github.io/otter/connected.html";
+    // Slack redirects the browser to this otter:// custom scheme, registered on the Slack app and
+    // handled here (Windows relaunches Otter with the URL; see UrlProtocol/IpcServer/Program, which hand
+    // it to DeliverCallbackUrl below). A custom-scheme redirect is what Slack calls a "desktop redirect":
+    // it marks Otter as a public client, which is what lets the oauth.v2.user.access calls below refresh
+    // tokens WITHOUT a client secret — a shipped binary can't safely carry one. (A public app can't
+    // register an http(s)/localhost redirect, so the custom scheme is the only desktop-redirect option.)
+    const string RedirectUri = "otter://callback";
 
-    // The OAuth callback arrives out-of-band (Windows relaunches us via the otter:// scheme, see
-    // IpcServer), so the in-flight flow parks a completion source here for the callback to resolve.
+    // The OAuth callback arrives out-of-band (Windows relaunches us via the otter:// scheme), so the
+    // in-flight flow parks a completion source here for the callback to resolve.
     static TaskCompletionSource<Uri>? _pendingCallback;
     static readonly object _pendingLock = new();
+
+    // Serialises token refreshes. Slack refresh tokens are single-use — two concurrent refreshes
+    // would race, and the loser would present an already-revoked refresh token. Callers re-check
+    // state after acquiring this, so only the first of a burst actually hits Slack.
+    static readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+    // Refresh a little before the real expiry so an in-flight status update never races the cutoff.
+    static readonly TimeSpan RefreshSkew = TimeSpan.FromMinutes(5);
 
     // ── Status ────────────────────────────────────────────────────────────────
 
@@ -133,7 +143,7 @@ static class SlackClient
     // ── OAuth ─────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Delivers an <c>otter://callback?...</c> URL (received via <see cref="IpcServer"/> or our own launch
+    /// Delivers an <c>otter://callback?...</c> URL (received via the named-pipe IPC or our own launch
     /// args) to the OAuth flow currently awaiting it. Safe to call from any thread; a no-op when no flow
     /// is in progress.
     /// </summary>
@@ -144,10 +154,17 @@ static class SlackClient
     }
 
     /// <summary>
-    /// Opens the browser to Slack's auth page, waits for the <c>otter://</c> redirect to be handed back,
-    /// exchanges the code via PKCE (no client secret required), and returns (userToken, teamName).
+    /// The token bundle returned by an <c>oauth.v2.user.access</c> call — both the initial code exchange
+    /// and a refresh. <paramref name="RefreshToken"/>/<paramref name="ExpiresAt"/> are null when the app
+    /// isn't using token rotation (a legacy non-expiring token).
     /// </summary>
-    public static async Task<(string Token, string TeamName)> RunOAuthFlowAsync(CancellationToken ct = default)
+    public record SlackAuth(string Token, string? RefreshToken, DateTime? ExpiresAt, string TeamName);
+
+    /// <summary>
+    /// Opens the browser to Slack's auth page, waits for the <c>otter://</c> redirect to be handed back,
+    /// exchanges the code via PKCE (no client secret required), and returns the resulting token bundle.
+    /// </summary>
+    public static async Task<SlackAuth> RunOAuthFlowAsync(CancellationToken ct = default)
     {
         var state = Guid.NewGuid().ToString("N");
 
@@ -206,9 +223,11 @@ static class SlackClient
         var code = qs.TryGetValue("code", out var c) && c.Length > 0
             ? c : throw new InvalidOperationException("No code in OAuth callback.");
 
-        // Exchange code → token using PKCE verifier instead of client secret
+        // Exchange code → token using the PKCE verifier instead of a client secret. oauth.v2.user.access
+        // is the user-scopes-only ("desktop") flow that, paired with the otter:// desktop redirect, lets
+        // the refresh below run without a client secret.
         var tokenResp = await Http.PostAsync(
-            "https://slack.com/api/oauth.v2.access",
+            "https://slack.com/api/oauth.v2.user.access",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["client_id"]     = ClientId,
@@ -217,20 +236,165 @@ static class SlackClient
                 ["code_verifier"] = codeVerifier,
             }));
 
-        await EnsureSlackOkAsync(tokenResp);
+        using var doc = JsonDocument.Parse(await tokenResp.Content.ReadAsStringAsync());
+        ThrowIfSlackError(doc.RootElement);
+        return ParseAuthResponse(doc.RootElement, fallbackRefreshToken: null);
+    }
 
-        using var doc  = JsonDocument.Parse(await tokenResp.Content.ReadAsStringAsync());
-        var root       = doc.RootElement;
-        var token      = root.GetProperty("authed_user").GetProperty("access_token").GetString()!;
-        var teamName   = root.GetProperty("team").GetProperty("name").GetString()!;
+    /// <summary>
+    /// Exchanges a refresh token for a fresh access token (PKCE app → no client secret, no PKCE
+    /// verifier). Slack rotates the refresh token on every call, so the returned bundle's refresh
+    /// token must be persisted in place of the one passed in.
+    /// </summary>
+    public static async Task<SlackAuth> RefreshTokenAsync(string refreshToken)
+    {
+        var resp = await Http.PostAsync(
+            "https://slack.com/api/oauth.v2.user.access",
+            new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"]     = ClientId,
+                ["grant_type"]    = "refresh_token",
+                ["refresh_token"] = refreshToken,
+            }));
 
-        return (token, teamName);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        ThrowIfSlackError(doc.RootElement);
+        // On refresh, Slack returns the new tokens at the top level; the initial exchange nests them
+        // under "authed_user". ParseAuthResponse handles both. If Slack ever omits a fresh refresh
+        // token, fall back to the current one so we don't lose the ability to refresh again.
+        return ParseAuthResponse(doc.RootElement, fallbackRefreshToken: refreshToken);
+    }
+
+    // Pulls the token bundle out of an oauth.v2.access response. User-token fields live under
+    // "authed_user" on the initial exchange but at the top level on refresh, so try the nested object
+    // first and fall back to the root. expires_in (seconds) is turned into an absolute UTC instant.
+    static SlackAuth ParseAuthResponse(JsonElement root, string? fallbackRefreshToken)
+    {
+        var bundle = root.TryGetProperty("authed_user", out var u)
+            && u.TryGetProperty("access_token", out _) ? u : root;
+
+        var token = bundle.GetProperty("access_token").GetString()
+            ?? throw new InvalidOperationException("Slack OAuth response had no access_token.");
+
+        var refreshToken = bundle.TryGetProperty("refresh_token", out var rt)
+            ? rt.GetString() : null;
+        if (string.IsNullOrEmpty(refreshToken)) refreshToken = fallbackRefreshToken;
+
+        DateTime? expiresAt = null;
+        if (bundle.TryGetProperty("expires_in", out var ei)
+            && ei.ValueKind == JsonValueKind.Number && ei.GetInt64() > 0)
+            expiresAt = DateTime.UtcNow.AddSeconds(ei.GetInt64());
+
+        var teamName = root.TryGetProperty("team", out var team)
+            && team.TryGetProperty("name", out var tn) ? tn.GetString() ?? "" : "";
+
+        return new SlackAuth(token, refreshToken, expiresAt, teamName);
+    }
+
+    /// <summary>
+    /// Revokes a token server-side via <c>auth.revoke</c> so a disconnect actually kills the credential
+    /// on Slack's side rather than just forgetting it locally. Revoking the access token deauthorises the
+    /// grant, which also retires its rotating refresh token. Best-effort: callers should clear local
+    /// state regardless of whether this succeeds.
+    /// </summary>
+    public static async Task RevokeTokenAsync(string token)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://slack.com/api/auth.revoke")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) }
+        };
+        var resp = await Http.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        await EnsureSlackOkAsync(resp);
+    }
+
+    // ── Token rotation ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Runs a Slack API call with a valid token, refreshing first if the stored one is at/near expiry,
+    /// and — should Slack still reject it as expired/invalid (e.g. clock skew, or a revocation mid
+    /// session) — refreshing once more and retrying. The refreshed token, rotated refresh token, and
+    /// new expiry are persisted to <paramref name="config"/>. Throws <see cref="SlackAuthException"/>
+    /// if no valid token can be obtained, signalling the caller to prompt a reconnect.
+    /// </summary>
+    public static async Task<T> WithTokenAsync<T>(Config config, Func<string, Task<T>> call)
+    {
+        var token = await GetValidTokenAsync(config);
+        try
+        {
+            return await call(token);
+        }
+        catch (SlackAuthException) when (UsesRotation(config))
+        {
+            token = await RefreshIfStaleAsync(config, observedToken: token, force: true);
+            return await call(token);
+        }
+    }
+
+    /// <summary>Void-returning overload of <see cref="WithTokenAsync{T}"/>.</summary>
+    public static Task WithTokenAsync(Config config, Func<string, Task> call) =>
+        WithTokenAsync(config, async t => { await call(t); return true; });
+
+    /// <summary>
+    /// Returns a token good for an imminent call, refreshing first if the stored one is within
+    /// <see cref="RefreshSkew"/> of expiry. A no-op (returns the stored token) when the app isn't
+    /// using token rotation.
+    /// </summary>
+    public static Task<string> GetValidTokenAsync(Config config)
+    {
+        if (!UsesRotation(config))
+            return Task.FromResult(config.SlackToken);
+        if (DateTime.UtcNow + RefreshSkew < config.SlackTokenExpiresAt!.Value)
+            return Task.FromResult(config.SlackToken);
+        return RefreshIfStaleAsync(config, observedToken: config.SlackToken, force: false);
+    }
+
+    static bool UsesRotation(Config config) =>
+        !string.IsNullOrEmpty(config.SlackRefreshToken) && config.SlackTokenExpiresAt is not null;
+
+    // Refreshes under the lock, unless another caller beat us to it. observedToken is the token the
+    // caller saw before contending for the lock; if it no longer matches, a concurrent refresh already
+    // produced a newer one and we hand that back instead of burning the (now single-use) refresh token.
+    static async Task<string> RefreshIfStaleAsync(Config config, string observedToken, bool force)
+    {
+        await _refreshLock.WaitAsync();
+        try
+        {
+            if (config.SlackToken != observedToken)
+                return config.SlackToken;
+            if (!force && DateTime.UtcNow + RefreshSkew < config.SlackTokenExpiresAt)
+                return config.SlackToken;
+
+            SlackAuth refreshed;
+            try
+            {
+                refreshed = await RefreshTokenAsync(config.SlackRefreshToken);
+            }
+            catch (SlackAuthException)
+            {
+                // The refresh token is dead (revoked, or lapsed after 30 days of disuse). Drop the
+                // stale credentials so the UI shows "Not connected" and surface a clear reconnect ask.
+                config.SlackToken = config.SlackRefreshToken = "";
+                config.SlackTokenExpiresAt = null;
+                config.Save();
+                throw new SlackAuthException("session_expired");
+            }
+
+            config.SlackToken          = refreshed.Token;
+            config.SlackRefreshToken   = refreshed.RefreshToken ?? config.SlackRefreshToken;
+            config.SlackTokenExpiresAt = refreshed.ExpiresAt;
+            config.Save();
+            return config.SlackToken;
+        }
+        finally
+        {
+            _refreshLock.Release();
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    // Parses a URL query string ("?a=1&b=2") into a map, URL-decoding keys and values. Used instead of
-    // HttpListener's QueryString now that the callback arrives as a bare otter:// URI.
+    // Parses a URL query string ("?a=1&b=2") into a map, URL-decoding keys and values.
     static Dictionary<string, string> ParseQuery(string query)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -252,13 +416,30 @@ static class SlackClient
         ThrowIfSlackError(doc.RootElement);
     }
 
-    // Every Slack Web API response carries an "ok" boolean; throw with the "error" string when it's false.
+    // Every Slack Web API response carries an "ok" boolean; throw with the "error" string when it's
+    // false. Token/credential errors throw SlackAuthException so callers can refresh-and-retry (and,
+    // failing that, prompt a reconnect) rather than treat them like an ordinary API failure.
     static void ThrowIfSlackError(JsonElement root)
     {
-        if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
-        {
-            var error = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown";
-            throw new InvalidOperationException($"Slack API error: {error}");
-        }
+        if (root.TryGetProperty("ok", out var ok) && ok.GetBoolean()) return;
+
+        var error = (root.TryGetProperty("error", out var e) ? e.GetString() : null) ?? "unknown";
+        throw IsAuthError(error)
+            ? new SlackAuthException(error)
+            : new InvalidOperationException($"Slack API error: {error}");
     }
+
+    static bool IsAuthError(string error) => error is
+        "token_expired" or "invalid_auth" or "token_revoked" or "not_authed"
+        or "account_inactive" or "invalid_refresh_token";
+}
+
+/// <summary>
+/// A Slack call failed because the token (or refresh token) is expired, invalid, or revoked —
+/// distinct from an ordinary API error so callers can attempt a refresh and, failing that, surface
+/// a "reconnect Slack" prompt. The "session_expired" variant means even refreshing failed.
+/// </summary>
+sealed class SlackAuthException : InvalidOperationException
+{
+    public SlackAuthException(string error) : base($"Slack authentication error: {error}") { }
 }

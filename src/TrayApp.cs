@@ -208,7 +208,8 @@ class TrayApp : IDisposable
 
     void OnApplicationExit(object? s, EventArgs e)
     {
-        if (_slackStatusSet) SlackClient.ClearStatusAsync(_config.SlackToken).GetAwaiter().GetResult();
+        if (_slackStatusSet)
+            SlackClient.WithTokenAsync(_config, SlackClient.ClearStatusAsync).GetAwaiter().GetResult();
     }
 
     // ── Slack ─────────────────────────────────────────────────────────────────
@@ -218,14 +219,15 @@ class TrayApp : IDisposable
         if (string.IsNullOrEmpty(_config.SlackToken)) return;
         try
         {
-            _previousStatus = await SlackClient.GetStatusAsync(_config.SlackToken);
-            await SlackClient.SetStatusAsync(_config.SlackToken, _config.StatusText, _config.StatusEmoji);
+            _previousStatus = await SlackClient.WithTokenAsync(_config, SlackClient.GetStatusAsync);
+            await SlackClient.WithTokenAsync(_config,
+                t => SlackClient.SetStatusAsync(t, _config.StatusText, _config.StatusEmoji));
             _slackStatusSet = true;
         }
         catch (Exception ex)
         {
             _previousStatus = null;
-            _tray.ShowBalloonTip(5_000, "Otter — Slack error", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(5_000, "Otter — Slack error", SlackErrorMessage(ex), ToolTipIcon.Error);
         }
     }
 
@@ -243,7 +245,7 @@ class TrayApp : IDisposable
             // restoring it would re-apply our own status — clear instead.
             if (restoreText == _config.StatusText && restoreEmoji == _config.StatusEmoji)
             {
-                await SlackClient.ClearStatusAsync(_config.SlackToken);
+                await SlackClient.WithTokenAsync(_config, SlackClient.ClearStatusAsync);
                 return;
             }
 
@@ -251,11 +253,12 @@ class TrayApp : IDisposable
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             if (restoreExp > 0 && restoreExp <= now)
             {
-                await SlackClient.ClearStatusAsync(_config.SlackToken);
+                await SlackClient.WithTokenAsync(_config, SlackClient.ClearStatusAsync);
                 return;
             }
 
-            await SlackClient.SetStatusAsync(_config.SlackToken, restoreText, restoreEmoji, restoreExp);
+            await SlackClient.WithTokenAsync(_config,
+                t => SlackClient.SetStatusAsync(t, restoreText, restoreEmoji, restoreExp));
         }
         catch { /* best-effort */ }
         finally
@@ -264,6 +267,12 @@ class TrayApp : IDisposable
             _previousStatus = null;
         }
     }
+
+    // A token that couldn't be refreshed means the Slack connection is gone (refresh token revoked or
+    // lapsed) — point the user at Settings to reconnect rather than show a raw API error string.
+    static string SlackErrorMessage(Exception ex) => ex is SlackAuthException
+        ? "Your Slack connection expired. Open Settings to reconnect."
+        : ex.Message;
 
     // ── UI refresh ────────────────────────────────────────────────────────────
 

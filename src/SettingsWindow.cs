@@ -108,7 +108,20 @@ class SettingsWindow : Form
         // Pull the latest workspace emoji in the background; the disk cache already backs autocomplete
         // until this lands. Fire-and-forget — RefreshAsync swallows offline/missing-scope failures.
         if (!string.IsNullOrEmpty(_config.SlackToken))
-            _ = _emojiStore.RefreshAsync(_config.SlackToken);
+            _ = RefreshWorkspaceEmojiAsync();
+    }
+
+    // Refreshes the workspace emoji catalogue, first ensuring the access token is current so a session
+    // that's been idle past the ~12h token lifetime still works. Failures are non-fatal — the disk
+    // cache keeps backing autocomplete.
+    async Task RefreshWorkspaceEmojiAsync()
+    {
+        try
+        {
+            var token = await SlackClient.GetValidTokenAsync(_config);
+            await _emojiStore.RefreshAsync(token);
+        }
+        catch { /* offline, or the connection lapsed — last good disk cache still serves autocomplete */ }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -554,7 +567,10 @@ class SettingsWindow : Form
 
         if (connected)
         {
-            _connStatus.Text      = $"✓  Connected to {_config.SlackTeamName}";
+            // oauth.v2.user.access may not return a team name; fall back to a plain "Connected".
+            _connStatus.Text      = string.IsNullOrEmpty(_config.SlackTeamName)
+                ? "✓  Connected to Slack"
+                : $"✓  Connected to {_config.SlackTeamName}";
             _connStatus.ForeColor = Theme.Green;
             _connectBtn.Text      = "Reconnect";
         }
@@ -575,14 +591,28 @@ class SettingsWindow : Form
 
         try
         {
-            var (token, teamName) = await SlackClient.RunOAuthFlowAsync();
-            _config.SlackToken    = token;
-            _config.SlackTeamName = teamName;
+            var auth = await SlackClient.RunOAuthFlowAsync();
+            _config.SlackToken          = auth.Token;
+            _config.SlackRefreshToken   = auth.RefreshToken ?? "";
+            _config.SlackTokenExpiresAt = auth.ExpiresAt;
+            _config.SlackTeamName       = auth.TeamName;
             Commit();
 
             // The new token now carries emoji:read — pull the workspace emoji straight away so
             // autocomplete works without waiting for the next time Settings is reopened.
-            _ = _emojiStore.RefreshAsync(token);
+            _ = _emojiStore.RefreshAsync(auth.Token);
+
+            // Slack hands the code back via the otter:// scheme, which leaves the browser sitting on a
+            // blank/"stuck" tab. Pull this window to the front so the user sees the success here, and
+            // explain that the leftover tab is harmless. Shown on every connect/reconnect — a reconnect
+            // may be months apart, by which point the behaviour is easy to forget.
+            Activate();
+            BringToFront();
+            MessageBox.Show(this,
+                "Otter is connected to Slack.\n\n"
+                + "The browser tab that opened for sign-in may look blank or stuck — that's normal, "
+                + "and you can safely close it.",
+                "Connected to Slack", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -597,10 +627,25 @@ class SettingsWindow : Form
         }
     }
 
-    void OnDisconnect(object? s, EventArgs e)
+    async void OnDisconnect(object? s, EventArgs e)
     {
-        _config.SlackToken    = "";
-        _config.SlackTeamName = "";
+        _disconnectBtn.Enabled = false;
+
+        // Revoke server-side so the credential dies on Slack's side, not just locally. Get a valid token
+        // first (refreshing a near-expired one) so we revoke a live grant — that also retires its refresh
+        // token. Best-effort: a network failure or already-dead session must not block the local clear.
+        try
+        {
+            var token = await SlackClient.GetValidTokenAsync(_config);
+            if (!string.IsNullOrEmpty(token))
+                await SlackClient.RevokeTokenAsync(token);
+        }
+        catch { /* fall through — we clear local state regardless */ }
+
+        _config.SlackToken          = "";
+        _config.SlackRefreshToken   = "";
+        _config.SlackTokenExpiresAt = null;
+        _config.SlackTeamName       = "";
         Commit();
         UpdateConnectionUI();
     }
