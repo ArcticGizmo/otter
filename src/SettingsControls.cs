@@ -223,6 +223,31 @@ internal static class Ui
         return fluid.AddWrap(l);
     }
 
+    // A smaller bold heading for the changelog's H3 sub-sections.
+    public static Label SubHeading(string text) => new()
+    {
+        Text      = text,
+        AutoSize  = true,
+        ForeColor = Theme.Fg,
+        Font      = new Font(FontName, 9.5f, FontStyle.Bold, GraphicsUnit.Point),
+        Margin    = new Padding(0, 6, 0, 4),
+    };
+
+    // An indented italic paragraph for blockquotes (the editorial asides in the changelog).
+    public static Label BlockQuote(FluidLayout fluid, string text)
+    {
+        var l = new Label
+        {
+            Text        = text,
+            AutoSize    = true,
+            MaximumSize = new Size(480, 0),
+            ForeColor   = Theme.Muted,
+            Font        = new Font(FontName, 9f, FontStyle.Italic, GraphicsUnit.Point),
+            Margin      = new Padding(12, 0, 0, 6),
+        };
+        return fluid.AddWrap(l);
+    }
+
     // ── Inputs ───────────────────────────────────────────────────────────────────
     public static ToggleSwitch MakeToggle() => new() { Margin = new Padding(0) };
 
@@ -334,6 +359,19 @@ internal static class Ui
         {
             using var stream = typeof(Ui).Assembly.GetManifestResourceStream(resourceName);
             return stream != null ? new Bitmap(stream) : null;
+        }
+        catch { return null; }
+    }
+
+    // Loads an embedded UTF-8 text resource (e.g. the bundled CHANGELOG.md), or null if unavailable.
+    public static string? LoadEmbeddedText(string resourceName)
+    {
+        try
+        {
+            using var stream = typeof(Ui).Assembly.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
         catch { return null; }
     }
