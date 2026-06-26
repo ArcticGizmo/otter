@@ -291,6 +291,23 @@ static class SlackClient
         return new SlackAuth(token, refreshToken, expiresAt, teamName);
     }
 
+    /// <summary>
+    /// Revokes a token server-side via <c>auth.revoke</c> so a disconnect actually kills the credential
+    /// on Slack's side rather than just forgetting it locally. Revoking the access token deauthorises the
+    /// grant, which also retires its rotating refresh token. Best-effort: callers should clear local
+    /// state regardless of whether this succeeds.
+    /// </summary>
+    public static async Task RevokeTokenAsync(string token)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://slack.com/api/auth.revoke")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) }
+        };
+        var resp = await Http.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        await EnsureSlackOkAsync(resp);
+    }
+
     // ── Token rotation ──────────────────────────────────────────────────────────
 
     /// <summary>

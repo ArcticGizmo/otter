@@ -627,8 +627,21 @@ class SettingsWindow : Form
         }
     }
 
-    void OnDisconnect(object? s, EventArgs e)
+    async void OnDisconnect(object? s, EventArgs e)
     {
+        _disconnectBtn.Enabled = false;
+
+        // Revoke server-side so the credential dies on Slack's side, not just locally. Get a valid token
+        // first (refreshing a near-expired one) so we revoke a live grant — that also retires its refresh
+        // token. Best-effort: a network failure or already-dead session must not block the local clear.
+        try
+        {
+            var token = await SlackClient.GetValidTokenAsync(_config);
+            if (!string.IsNullOrEmpty(token))
+                await SlackClient.RevokeTokenAsync(token);
+        }
+        catch { /* fall through — we clear local state regardless */ }
+
         _config.SlackToken          = "";
         _config.SlackRefreshToken   = "";
         _config.SlackTokenExpiresAt = null;
