@@ -19,6 +19,7 @@ class SettingsWindow : Form
     readonly Action _onChanged;
     readonly Action<int> _onSnooze;
     readonly Action _onClearSnooze;
+    readonly Action _onCheckForUpdates;
 
     // The app's otter (transparent) for in-app imagery — the banner and About header.
     readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
@@ -56,12 +57,14 @@ class SettingsWindow : Form
     // Start-at-login toggle (on the Getting started page).
     ToggleSwitch _runAtLoginToggle = null!;
 
-    public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze)
+    public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze,
+        Action onCheckForUpdates)
     {
-        _config        = config;
-        _onChanged     = onChanged;
-        _onSnooze      = onSnooze;
-        _onClearSnooze = onClearSnooze;
+        _config            = config;
+        _onChanged         = onChanged;
+        _onSnooze          = onSnooze;
+        _onClearSnooze     = onClearSnooze;
+        _onCheckForUpdates = onCheckForUpdates;
         _fluid = new FluidLayout(FluidWidth);
 
         Text            = "Otter Settings";
@@ -557,7 +560,14 @@ class SettingsWindow : Form
         page.Controls.Add(Ui.Separator(_fluid));
 
         page.Controls.Add(Ui.SectionTitle("Updates"));
-        page.Controls.Add(Ui.BodyText(_fluid, $"Currently running v{AppInfo.Version}. Automatic updates arrive in a later release."));
+        page.Controls.Add(Ui.BodyText(_fluid, $"Currently running v{AppInfo.Version}."));
+
+        var updateRow = Ui.ButtonRow();
+        updateRow.Margin = new Padding(0, 4, 0, 4);
+        var checkBtn = Ui.MakeButton("Check for updates");
+        checkBtn.Click += (_, _) => _onCheckForUpdates();
+        updateRow.Controls.Add(checkBtn);
+        page.Controls.Add(updateRow);
     }
 
     // ── Connection state ────────────────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using Velopack;
+using Velopack.Sources;
 
 namespace Otter;
 
@@ -7,6 +9,10 @@ class TrayApp : IDisposable
 {
     Config _config;
     bool _slackStatusSet;
+
+    // Latched while a check/download/apply is in flight so a second click (the tray menu and the
+    // settings window both reach CheckForUpdates) can't kick off a parallel run and race two installs.
+    bool _updateInProgress;
     SettingsWindow? _settingsForm;
     SlackClient.SlackStatus? _previousStatus;
 
@@ -68,6 +74,7 @@ class TrayApp : IDisposable
             snoozeMenu,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Settings…", null, OnOpenSettings),
+            new ToolStripMenuItem("Check for updates…", null, (_, _) => CheckForUpdates()),
             new ToolStripSeparator(),
             new ToolStripMenuItem("Quit", null, (_, _) => Application.Exit()),
         });
@@ -172,7 +179,7 @@ class TrayApp : IDisposable
         // Shown modeless (no owner) so it's a free-standing top-level window we can move between
         // virtual desktops. It edits the live config and persists each change itself, calling back
         // here so the tray reflects edits as they happen — there's no Save/Cancel round-trip.
-        var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze);
+        var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze, CheckForUpdates);
         _settingsForm = form;
         form.FormClosed += (_, _) => { form.Dispose(); _settingsForm = null; };
         form.Show();
@@ -273,6 +280,57 @@ class TrayApp : IDisposable
     static string SlackErrorMessage(Exception ex) => ex is SlackAuthException
         ? "Your Slack connection expired. Open Settings to reconnect."
         : ex.Message;
+
+    // ── Updates ─────────────────────────────────────────────────────────────────
+
+    // Checks GitHub releases for a newer build and, if found, downloads and applies it (relaunching
+    // Otter). Reachable from both the tray menu and the About page; _updateInProgress guards against a
+    // second click racing a download already under way. A non-installed (dev) build has no Velopack
+    // package to update, so CheckForUpdatesAsync throws and we surface that on the failure path.
+    async void CheckForUpdates()
+    {
+        // A run is already in flight — just ignore the click.
+        if (_updateInProgress) return;
+        _updateInProgress = true;
+
+        try
+        {
+            // Querying GitHub can take a few seconds; show an immediate balloon so the click feels
+            // acknowledged rather than dead until the check resolves.
+            _tray.ShowBalloonTip(3_000, "Otter", "Checking for updates…", ToolTipIcon.Info);
+
+            var mgr = new UpdateManager(new GithubSource(AppInfo.RepoUrl, null, false));
+            var update = await mgr.CheckForUpdatesAsync();
+            if (update == null)
+            {
+                _tray.ShowBalloonTip(4_000, "Otter", "You're on the latest version.", ToolTipIcon.Info);
+                return;
+            }
+
+            _tray.ShowBalloonTip(5_000, "Otter — Updating",
+                $"Downloading v{update.TargetFullRelease.Version}…", ToolTipIcon.Info);
+
+            // Close the settings window up front: the closing window is the visible signal the update
+            // is under way, and it stops the button being clicked again mid-download. The tray stays
+            // up so the message loop survives the awaits below — ApplyUpdatesAndRestart tears
+            // everything down when it relaunches.
+            if (_settingsForm is { IsDisposed: false })
+                _settingsForm.Close();
+
+            await mgr.DownloadUpdatesAsync(update);
+            mgr.ApplyUpdatesAndRestart(update);
+        }
+        catch (Exception ex)
+        {
+            _tray.ShowBalloonTip(6_000, "Otter — Update Failed", ex.Message, ToolTipIcon.Error);
+        }
+        finally
+        {
+            // ApplyUpdatesAndRestart exits the process, so this only runs on the "up to date" or
+            // failure paths — both of which should allow another check later.
+            _updateInProgress = false;
+        }
+    }
 
     // ── UI refresh ────────────────────────────────────────────────────────────
 
