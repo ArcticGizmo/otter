@@ -19,6 +19,7 @@ Otter fixes that. It quietly watches for when you're on a Microsoft Teams call a
 - **Snooze when you need to** — heading into back-to-back calls you'd rather not broadcast? Pause Otter for a while from the tray.
 - **Quiet if you want it** — keep the "call detected" notification on, or turn it off.
 - **Starts with Windows** — flip one toggle and Otter is ready every time you log in.
+- **Stays current** — check for updates from the tray menu or the About page; Otter downloads the latest release and restarts itself.
 - **Your data stays yours** — Otter connects to Slack with a secure sign-in and stores everything locally on your machine. It only watches _whether_ Teams is using your microphone, never what's said on the call.
 
 ## Getting started
@@ -30,6 +31,12 @@ Otter fixes that. It quietly watches for when you're on a Microsoft Teams call a
 5. That's it. Next time you join a Teams call, your Slack status updates itself.
 
 > **Note:** Otter is a Windows app and currently detects Microsoft Teams calls. Support for more apps and signals is on the way.
+
+## Updating
+
+Right-click the system tray icon and select **Check for updates…** — or open **Settings → About** and click **Check for updates**.
+
+If a newer release is available, Otter downloads it and restarts automatically. Otherwise it lets you know you're already on the latest version.
 
 ---
 

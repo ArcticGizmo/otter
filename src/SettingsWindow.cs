@@ -1,5 +1,7 @@
 namespace Otter;
 
+using System.Text.RegularExpressions;
+
 /// <summary>
 /// Otter's first-class settings window: a dark, resizable shell split into a fixed-width left
 /// navigation rail and a fluid content area. The nav switches between pages — Getting started,
@@ -19,6 +21,7 @@ class SettingsWindow : Form
     readonly Action _onChanged;
     readonly Action<int> _onSnooze;
     readonly Action _onClearSnooze;
+    readonly Action _onCheckForUpdates;
 
     // The app's otter (transparent) for in-app imagery — the banner and About header.
     readonly Bitmap? _icon = Ui.LoadEmbeddedBitmap("Otter.icon.png");
@@ -56,12 +59,14 @@ class SettingsWindow : Form
     // Start-at-login toggle (on the Getting started page).
     ToggleSwitch _runAtLoginToggle = null!;
 
-    public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze)
+    public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze,
+        Action onCheckForUpdates)
     {
-        _config        = config;
-        _onChanged     = onChanged;
-        _onSnooze      = onSnooze;
-        _onClearSnooze = onClearSnooze;
+        _config            = config;
+        _onChanged         = onChanged;
+        _onSnooze          = onSnooze;
+        _onClearSnooze     = onClearSnooze;
+        _onCheckForUpdates = onCheckForUpdates;
         _fluid = new FluidLayout(FluidWidth);
 
         Text            = "Otter Settings";
@@ -151,6 +156,7 @@ class SettingsWindow : Form
         AddPage("teams",         "Microsoft Teams", BuildTeamsPage, nested: true);
         AddPage("snooze",        "Snooze",          BuildSnoozePage);
         AddPage("about",         "About",           BuildAboutPage);
+        AddPage("changelog",     "Changelog",       BuildChangelogPage);
 
         Controls.Add(_contentHost); // Fill added first…
         Controls.Add(_navPanel);    // …then the Left rail claims its edge and the content fills the rest.
@@ -557,7 +563,60 @@ class SettingsWindow : Form
         page.Controls.Add(Ui.Separator(_fluid));
 
         page.Controls.Add(Ui.SectionTitle("Updates"));
-        page.Controls.Add(Ui.BodyText(_fluid, $"Currently running v{AppInfo.Version}. Automatic updates arrive in a later release."));
+        page.Controls.Add(Ui.BodyText(_fluid, $"Currently running v{AppInfo.Version}."));
+
+        var updateRow = Ui.ButtonRow();
+        updateRow.Margin = new Padding(0, 4, 0, 4);
+        var checkBtn = Ui.MakeButton("Check for updates");
+        checkBtn.Click += (_, _) => _onCheckForUpdates();
+        updateRow.Controls.Add(checkBtn);
+        page.Controls.Add(updateRow);
+    }
+
+    // ── Changelog ─────────────────────────────────────────────────────────────────
+    // Renders the embedded CHANGELOG.md into the page using the same factory controls as every other
+    // page. Handles the subset of markdown that file actually uses: H1/H2/H3 headings, bullet lists,
+    // blockquotes, thematic breaks, and inline emphasis/links.
+    void BuildChangelogPage(FlowLayoutPanel page)
+    {
+        var markdown = Ui.LoadEmbeddedText("Otter.CHANGELOG.md");
+        if (markdown is null)
+        {
+            page.Controls.Add(Ui.BodyText(_fluid, "Changelog not available."));
+            return;
+        }
+
+        foreach (var rawLine in markdown.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+
+            if (line.StartsWith("## "))
+                page.Controls.Add(Ui.SectionTitle(StripInlineMarkdown(line[3..])));
+            else if (line.StartsWith("### "))
+                page.Controls.Add(Ui.SubHeading(StripInlineMarkdown(line[4..])));
+            else if (line.StartsWith("# "))
+                { /* top-level title — the nav label and page header already say "Changelog" */ }
+            else if (line.StartsWith("- ") || line.StartsWith("* "))
+                page.Controls.Add(Ui.BulletText(_fluid, StripInlineMarkdown(line[2..])));
+            else if (line == "---")
+                page.Controls.Add(Ui.Separator(_fluid));
+            else if (line.StartsWith("> "))
+                page.Controls.Add(Ui.BlockQuote(_fluid, StripInlineMarkdown(line[2..])));
+            else if (line.Trim().Length > 0)
+                page.Controls.Add(Ui.BodyText(_fluid, StripInlineMarkdown(line)));
+        }
+    }
+
+    // Strips the inline markdown patterns that appear in CHANGELOG.md: bold, italic, inline code, and
+    // [text](url) links. Bare [brackets] (the version tags in headings) are intentionally left alone.
+    static string StripInlineMarkdown(string text)
+    {
+        text = Regex.Replace(text, @"\*\*(.*?)\*\*",         "$1");  // **bold**
+        text = Regex.Replace(text, @"__(.*?)__",             "$1");  // __bold__
+        text = Regex.Replace(text, @"\*(.*?)\*",             "$1");  // *italic*
+        text = Regex.Replace(text, @"`([^`]+)`",             "$1");  // `inline code`
+        text = Regex.Replace(text, @"\[([^\]]+)\]\([^)]+\)", "$1");  // [text](url)
+        return text;
     }
 
     // ── Connection state ────────────────────────────────────────────────────────────
