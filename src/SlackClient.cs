@@ -335,18 +335,6 @@ static class SlackClient
     static bool UsesRotation(Config config) =>
         !string.IsNullOrEmpty(config.SlackRefreshToken) && config.SlackTokenExpiresAt is not null;
 
-    /// <summary>
-    /// Forces a refresh now, regardless of how much life the current token has left, and persists the
-    /// result. Exposed so the live rotation round-trip can be exercised on demand rather than waiting
-    /// out the ~12h token lifetime. Throws <see cref="SlackAuthException"/> if the connection is gone.
-    /// </summary>
-    // DEBUG — remove before release along with the "Force token refresh" tray item.
-    public static Task<string> ForceRefreshAsync(Config config) =>
-        UsesRotation(config)
-            ? RefreshIfStaleAsync(config, observedToken: config.SlackToken, force: true)
-            : throw new InvalidOperationException(
-                "No refresh token stored — connect Slack first (or the app isn't using token rotation).");
-
     // Refreshes under the lock, unless another caller beat us to it. observedToken is the token the
     // caller saw before contending for the lock; if it no longer matches, a concurrent refresh already
     // produced a newer one and we hand that back instead of burning the (now single-use) refresh token.

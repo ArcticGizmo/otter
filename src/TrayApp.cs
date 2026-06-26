@@ -68,8 +68,6 @@ class TrayApp : IDisposable
             snoozeMenu,
             new ToolStripSeparator(),
             new ToolStripMenuItem("Settings…", null, OnOpenSettings),
-            // DEBUG — remove before release. Exercises the live token-rotation round-trip on demand.
-            new ToolStripMenuItem("Force token refresh (debug)", null, OnForceRefresh),
             new ToolStripSeparator(),
             new ToolStripMenuItem("Quit", null, (_, _) => Application.Exit()),
         });
@@ -267,25 +265,6 @@ class TrayApp : IDisposable
         {
             _slackStatusSet = false;
             _previousStatus = null;
-        }
-    }
-
-    // DEBUG — remove before release. Forces a token refresh and reports the outcome via a balloon so
-    // the rotation round-trip can be verified without waiting out the ~12h access-token lifetime.
-    async void OnForceRefresh(object? s, EventArgs e)
-    {
-        try
-        {
-            var before = _config.SlackToken;
-            var token  = await SlackClient.ForceRefreshAsync(_config);
-            var expiry = _config.SlackTokenExpiresAt?.ToLocalTime().ToString("g") ?? "—";
-            var what   = token != before ? "Got a new token" : "Token unchanged";
-            _tray.ShowBalloonTip(6_000, "Otter — token refresh",
-                $"{what}. Expires {expiry}.", ToolTipIcon.Info);
-        }
-        catch (Exception ex)
-        {
-            _tray.ShowBalloonTip(6_000, "Otter — refresh failed", SlackErrorMessage(ex), ToolTipIcon.Error);
         }
     }
 
