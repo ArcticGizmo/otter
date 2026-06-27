@@ -57,7 +57,7 @@ sealed class MicrophoneInUseSignal : IStatusSignal
 
     // The mic ConsentStore is keyed differently per app kind: packaged apps (new Teams) appear as a
     // subkey named for their PackageFamilyName ("MSTeams_8wekyb3d8bbwe"); unpackaged apps (classic
-    // Teams) live under "NonPackaged" keyed by an encoded exe path containing "Teams.exe". Values may
+    // Teams) live under "NonPackaged" keyed by an encoded exe path ending in "Teams.exe". Values may
     // sit on that key or a child, so once we're under a Teams-named ancestor we check every descendant.
     static bool Scan(RegistryKey key, bool underTeams)
     {
@@ -68,10 +68,23 @@ sealed class MicrophoneInUseSignal : IStatusSignal
             using var sub = key.OpenSubKey(name);
             if (sub == null) continue;
 
-            bool t = underTeams || name.Contains("teams", StringComparison.OrdinalIgnoreCase);
-            if (Scan(sub, t)) return true;
+            if (Scan(sub, underTeams || IsTeamsKey(name))) return true;
         }
         return false;
+    }
+
+    // Identifies the ConsentStore key for a Teams app, matching the package name / exe filename
+    // precisely rather than by substring. A loose "contains teams" test would also fire for unrelated
+    // apps such as TeamSpeak ("…#TeamSpeak.exe"), reporting a Teams call that isn't happening.
+    static bool IsTeamsKey(string name)
+    {
+        // Packaged "new Teams": PackageFamilyName "MSTeams_<publisherHash>".
+        if (name.StartsWith("MSTeams_", StringComparison.OrdinalIgnoreCase)) return true;
+
+        // NonPackaged keys encode the full path with '#' as the separator; the last segment is the exe.
+        string exe = name.Split('#')[^1];
+        return exe.Equals("Teams.exe",    StringComparison.OrdinalIgnoreCase)   // classic Teams
+            || exe.Equals("ms-teams.exe", StringComparison.OrdinalIgnoreCase);  // new Teams (unpackaged launch)
     }
 
     // In use ⇔ a capture session was started (Start > 0) and not yet stopped (Stop == 0). Both values
