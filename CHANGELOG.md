@@ -6,6 +6,15 @@ All notable changes to Otter are recorded here. Otter follows [semantic versioni
 
 ---
 
+## [v0.3.0] - 2026-06-27
+
+- **Detect any app** — Teams, Zoom, and Discord out of the box, plus your own, on a new Detection page.
+- **Works with virtual audio devices** — no longer misses calls on virtual soundcards like SteelSeries Sonar.
+- **Slack Status tab** — status text, emoji, and preview on their own settings page.
+- **Mic-usage finder** — a live log of recent mic users to spot apps Otter isn't catching.
+
+---
+
 ## [v0.2.1] - 2026-06-26
 
 - **Check for updates** — from the tray menu or the About page; Otter downloads the latest release and restarts itself

@@ -4,11 +4,10 @@ using System.Text.RegularExpressions;
 
 /// <summary>
 /// Otter's first-class settings window: a dark, resizable shell split into a fixed-width left
-/// navigation rail and a fluid content area. The nav switches between pages — Getting started,
-/// Integrations (with Microsoft Teams nested beneath), Snooze, and About — built entirely from the
-/// <see cref="Ui"/> control factory so they stay
-/// visually consistent. Edits apply directly to the live <see cref="Config"/> and persist as the
-/// user makes them — text fields commit when focus leaves, toggles and the Slack connection commit
+/// navigation rail and a fluid content area. The nav switches between pages — Getting started, Slack
+/// Status, Detection, Snooze, and About — built entirely from the <see cref="Ui"/> control factory so
+/// they stay visually consistent. Edits apply directly to the live <see cref="Config"/> and persist as
+/// the user makes them — text fields commit when focus leaves, toggles and the Slack connection commit
 /// instantly — so there is no Save/Cancel step. Each commit invokes <c>onChanged</c> so the caller
 /// can persist the config and refresh the tray.
 /// </summary>
@@ -59,14 +58,21 @@ class SettingsWindow : Form
     // Start-at-login toggle (on the Getting started page).
     ToggleSwitch _runAtLoginToggle = null!;
 
+    // Detection page.
+    readonly IMicUsageFeed _feed;
+    FlowLayoutPanel _productList = null!;
+    FlowLayoutPanel _micLog      = null!;
+    ToggleSwitch    _trackToggle = null!;
+
     public SettingsWindow(Config config, Action onChanged, Action<int> onSnooze, Action onClearSnooze,
-        Action onCheckForUpdates)
+        Action onCheckForUpdates, IMicUsageFeed feed)
     {
         _config            = config;
         _onChanged         = onChanged;
         _onSnooze          = onSnooze;
         _onClearSnooze     = onClearSnooze;
         _onCheckForUpdates = onCheckForUpdates;
+        _feed              = feed;
         _fluid = new FluidLayout(FluidWidth);
 
         Text            = "Otter Settings";
@@ -90,6 +96,15 @@ class SettingsWindow : Form
         {
             if (IsHandleCreated) BeginInvoke(UpdateStatusPreview);
         };
+
+        // New mic-usage observations arrive on the signal's poll thread — refresh the live log (only
+        // while the Detection page is the one on screen) on the UI thread.
+        _feed.CapturesChanged += OnCapturesChanged;
+    }
+
+    void OnCapturesChanged()
+    {
+        if (_currentKey == "detection" && IsHandleCreated) BeginInvoke(RefreshMicLog);
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -109,6 +124,7 @@ class SettingsWindow : Form
         foreach (var page in _pages.Values)
             NativeMethods.UseDarkScrollBars(page.Handle);
         _fluid.Apply();
+        ApplyDetectionWidths();
 
         // Pull the latest workspace emoji in the background; the disk cache already backs autocomplete
         // until this lands. Fire-and-forget — RefreshAsync swallows offline/missing-scope failures.
@@ -152,8 +168,8 @@ class SettingsWindow : Form
         _contentHost.Resize += (_, _) => _fluid.Apply();
 
         AddPage("start",         "Getting started", BuildGettingStartedPage);
-        AddPage("integrations",  "Integrations",    BuildIntegrationsPage);
-        AddPage("teams",         "Microsoft Teams", BuildTeamsPage, nested: true);
+        AddPage("status",        "Slack Status",    BuildStatusPage);
+        AddPage("detection",     "Detection",       BuildDetectionPage);
         AddPage("snooze",        "Snooze",          BuildSnoozePage);
         AddPage("about",         "About",           BuildAboutPage);
         AddPage("changelog",     "Changelog",       BuildChangelogPage);
@@ -277,6 +293,11 @@ class SettingsWindow : Form
         }
 
         _fluid.Apply();
+        ApplyDetectionWidths();
+
+        // The live log may have moved on while another page was showing (we skip refreshes when the
+        // Detection page is hidden) — bring it current as the user lands on it.
+        if (key == "detection") RefreshMicLog();
     }
 
     // The width available to full-width page controls: the content area minus page padding and a
@@ -294,7 +315,7 @@ class SettingsWindow : Form
         BuildBanner(page);
 
         page.Controls.Add(Ui.SectionTitle("What it does"));
-        page.Controls.Add(Ui.BulletText(_fluid, "Watches for Microsoft Teams calls and sets your Slack status automatically."));
+        page.Controls.Add(Ui.BulletText(_fluid, "Watches for calls (Teams, Zoom, Discord, and any app you add) and sets your Slack status automatically."));
         page.Controls.Add(Ui.BulletText(_fluid, "Clears or restores your previous status the moment the call ends."));
         page.Controls.Add(Ui.BulletText(_fluid, "Snooze it for a while, or disable it entirely, from the tray icon."));
 
@@ -354,7 +375,7 @@ class SettingsWindow : Form
         };
         var tag = new Label
         {
-            Text      = "Hands-off Slack status — starting with Teams calls",
+            Text      = "Hands-off Slack status for your calls",
             AutoSize  = true,
             ForeColor = Theme.Muted,
             Font      = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
@@ -378,20 +399,11 @@ class SettingsWindow : Form
         page.Controls.Add(banner);
     }
 
-    // ── Integrations ────────────────────────────────────────────────────────────────
-    void BuildIntegrationsPage(FlowLayoutPanel page)
-    {
-        page.Controls.Add(Ui.SectionTitle("Integrations"));
-        page.Controls.Add(Ui.BodyText(_fluid,
-            "Apps Otter watches to update your Slack status. Select one to configure it."));
-        page.Controls.Add(Ui.BulletText(_fluid, "Microsoft Teams — sets your status while you're on a Teams call."));
-    }
-
-    // ── Microsoft Teams ──────────────────────────────────────────────────────────────
-    void BuildTeamsPage(FlowLayoutPanel page)
+    // ── Slack Status ──────────────────────────────────────────────────────────────────
+    void BuildStatusPage(FlowLayoutPanel page)
     {
         page.Controls.Add(Ui.SectionTitle("Call status"));
-        page.Controls.Add(Ui.BodyText(_fluid, "What Otter sets your Slack status to while you're on a Teams call."));
+        page.Controls.Add(Ui.BodyText(_fluid, "What Otter sets your Slack status to while you're on a call."));
 
         page.Controls.Add(Ui.FieldCaption("Status text"));
         _statusTextBox = Ui.MakeTextBox(_config.StatusText);
@@ -443,6 +455,223 @@ class SettingsWindow : Form
         previewRow.Controls.Add(_previewEmoji);
         previewRow.Controls.Add(_statusPreview);
         page.Controls.Add(previewRow);
+    }
+
+    // ── Detection ─────────────────────────────────────────────────────────────────────
+    void BuildDetectionPage(FlowLayoutPanel page)
+    {
+        page.Controls.Add(Ui.SectionTitle("Detected apps"));
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Otter sets your status when any enabled app below is using the microphone. Match terms are " +
+            "comma-separated and matched as case-insensitive substrings of the app's name (e.g. \"teams\", " +
+            "\"zoom\"). Turn an app off to ignore it."));
+
+        _productList = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents  = false,
+            AutoSize      = true,
+            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
+            Margin        = new Padding(0, 4, 0, 4),
+        };
+        foreach (var p in _config.DetectionProducts)
+            _productList.Controls.Add(BuildProductRow(p));
+        page.Controls.Add(_productList);
+
+        var addRow = Ui.ButtonRow();
+        var addBtn = Ui.MakeButton("Add app");
+        addBtn.Click += (_, _) =>
+        {
+            var p = new DetectionProduct { Name = "", Match = "", Enabled = true };
+            _config.DetectionProducts.Add(p);
+            var row = BuildProductRow(p);
+            _productList.Controls.Add(row);
+            ApplyDetectionWidths();
+            Commit();
+        };
+        addRow.Controls.Add(addBtn);
+        page.Controls.Add(addRow);
+
+        page.Controls.Add(Ui.Separator(_fluid));
+
+        _trackToggle = Ui.MakeToggle();
+        _trackToggle.Checked = _feed.TrackingEnabled;   // reflect the live (in-memory) state; set before wiring
+        _trackToggle.CheckedChanged += (_, _) =>
+        {
+            // Transient discovery aid — write straight to the signal, never to config.
+            _feed.TrackingEnabled = _trackToggle.Checked;
+            RefreshMicLog();
+        };
+        page.Controls.Add(Ui.TitleRow(_fluid, "Track mic usage", _trackToggle));
+        page.Controls.Add(Ui.BodyText(_fluid,
+            "Logs apps recently seen using your microphone, so you can spot anything Otter isn't matching " +
+            "yet. Green means it's already matched; otherwise use Quick add to start detecting it."));
+
+        _micLog = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents  = false,
+            AutoSize      = true,
+            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
+            Margin        = new Padding(0, 4, 0, 0),
+        };
+        page.Controls.Add(_micLog);
+        RefreshMicLog();
+    }
+
+    // One editable product: enable toggle, name, comma-separated match terms, and a remove button.
+    // Laid out manually (rather than via FluidLayout) so rows can be added/removed without leaving
+    // stale references behind; ApplyDetectionWidths drives the fill width on resize.
+    Panel BuildProductRow(DetectionProduct p)
+    {
+        var row = new Panel { Height = 52, Margin = new Padding(0, 0, 0, 6), BackColor = Theme.CodeBg };
+
+        var toggle = Ui.MakeToggle();
+        toggle.BackColor = row.BackColor;   // the toggle paints its own bg — match the row so it isn't a dark cut-out
+        toggle.Checked = p.Enabled;   // set before wiring so this doesn't fire a commit during build
+        toggle.CheckedChanged += (_, _) => { p.Enabled = toggle.Checked; Commit(); RefreshMicLog(); };
+
+        var nameCap = Ui.FieldCaption("Name");
+        var nameBox = Ui.MakeTextBox(p.Name);
+        nameBox.Leave += (_, _) =>
+        {
+            var t = nameBox.Text.Trim();
+            if (t != p.Name) { p.Name = t; Commit(); }
+        };
+
+        var matchCap = Ui.FieldCaption("Match terms");
+        var matchBox = Ui.MakeTextBox(p.Match);
+        matchBox.Leave += (_, _) =>
+        {
+            var t = matchBox.Text.Trim();
+            if (t != p.Match) { p.Match = t; Commit(); RefreshMicLog(); }
+        };
+
+        var remove = Ui.MakeButton("Remove");
+        remove.Click += (_, _) =>
+        {
+            _config.DetectionProducts.Remove(p);
+            _productList.Controls.Remove(row);
+            row.Dispose();
+            Commit();
+            RefreshMicLog();
+        };
+
+        row.Controls.Add(toggle);
+        row.Controls.Add(nameCap);
+        row.Controls.Add(nameBox);
+        row.Controls.Add(matchCap);
+        row.Controls.Add(matchBox);
+        row.Controls.Add(remove);
+
+        void Layout()
+        {
+            const int pad = 8, nameW = 150;
+            toggle.Location = new Point(pad, (row.Height - toggle.Height) / 2);
+            int left = pad + toggle.Width + 12;
+            remove.Location = new Point(row.Width - remove.Width - pad, (row.Height - remove.Height) / 2);
+
+            nameCap.Location = new Point(left, 5);
+            nameBox.Location = new Point(left, 22);
+            nameBox.Width    = nameW;
+
+            int matchLeft = left + nameW + 12;
+            matchCap.Location = new Point(matchLeft, 5);
+            matchBox.Location = new Point(matchLeft, 22);
+            matchBox.Width    = Math.Max(60, remove.Location.X - 12 - matchLeft);
+        }
+        row.Resize += (_, _) => Layout();
+        row.Width = FluidWidth();
+        Layout();
+        return row;
+    }
+
+    // Rebuilds the live mic-usage log from the feed, colouring matched apps green and offering a
+    // quick-add on the rest. Cheap to call on any change (toggle, edit, new observation).
+    void RefreshMicLog()
+    {
+        if (_micLog is null) return;
+
+        _micLog.SuspendLayout();
+        foreach (Control c in _micLog.Controls) c.Dispose();
+        _micLog.Controls.Clear();
+
+        if (!_feed.TrackingEnabled)
+            _micLog.Controls.Add(Ui.FieldCaption("Turn on to start logging microphone usage."));
+        else
+        {
+            var caps = _feed.RecentCaptures;
+            if (caps.Count == 0)
+                _micLog.Controls.Add(Ui.FieldCaption("No microphone usage seen yet."));
+            else
+                foreach (var cap in caps)
+                    _micLog.Controls.Add(BuildLogRow(cap, Matches(cap.Identifier)));
+        }
+
+        _micLog.ResumeLayout();
+        ApplyDetectionWidths();
+    }
+
+    Panel BuildLogRow(MicCapture cap, bool matched)
+    {
+        var row = new Panel { Height = 30, Margin = new Padding(0, 0, 0, 4), BackColor = Theme.FormBg };
+        var label = new Label
+        {
+            Text      = matched ? $"{cap.Identifier}  ✓ matched" : cap.Identifier,
+            AutoSize  = true,
+            ForeColor = matched ? Theme.Green : Theme.Fg,
+            Location  = new Point(0, 7),
+        };
+        row.Controls.Add(label);
+
+        if (!matched)
+        {
+            var add = Ui.MakeButton("Quick add");
+            add.Click += (_, _) => QuickAdd(cap.Identifier);
+            row.Controls.Add(add);
+            void Layout() => add.Location = new Point(row.Width - add.Width, (row.Height - add.Height) / 2);
+            row.Resize += (_, _) => Layout();
+            row.Width = FluidWidth();
+            Layout();
+        }
+        return row;
+    }
+
+    // Adds a new enabled product from a logged app, using the app's identifier as the match term and a
+    // tidied form as the name. Refreshes both lists so the log entry immediately turns green.
+    void QuickAdd(string identifier)
+    {
+        var name = identifier.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? identifier[..^4]
+            : identifier;
+
+        var p = new DetectionProduct { Name = name, Match = identifier, Enabled = true };
+        _config.DetectionProducts.Add(p);
+        _productList.Controls.Add(BuildProductRow(p));
+        Commit();
+        ApplyDetectionWidths();
+        RefreshMicLog();
+    }
+
+    // True if an app identifier matches any enabled product's terms, using the same case-insensitive
+    // substring rule as the signal — so log rows reflect detection exactly.
+    bool Matches(string identifier)
+    {
+        var id = identifier.ToLowerInvariant();
+        return _config.DetectionProducts
+            .Where(p => p.Enabled)
+            .SelectMany(p => p.Terms)
+            .Any(t => id.Contains(t.ToLowerInvariant()));
+    }
+
+    // Fills the dynamic Detection rows (which bypass FluidLayout) to the available width on resize.
+    void ApplyDetectionWidths()
+    {
+        int w = FluidWidth();
+        if (_productList is not null)
+            foreach (Control c in _productList.Controls) c.Width = w;
+        if (_micLog is not null)
+            foreach (Control c in _micLog.Controls) c.Width = w;
     }
 
     void UpdateStatusPreview()
@@ -713,6 +942,7 @@ class SettingsWindow : Form
     {
         if (disposing)
         {
+            _feed.CapturesChanged -= OnCapturesChanged;
             _icon?.Dispose();
             _emojiAutocomplete?.Dispose();
             _emojiStore.Dispose();
