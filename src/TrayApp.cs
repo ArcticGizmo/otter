@@ -18,6 +18,7 @@ class TrayApp : IDisposable
 
     readonly NotifyIcon _tray;
     readonly SignalCoordinator _coordinator;
+    readonly MicrophoneInUseSignal _mic;
 
     // Menu items updated dynamically
     readonly ToolStripMenuItem _statusItem;
@@ -36,11 +37,12 @@ class TrayApp : IDisposable
     {
         _config = Config.Load();
 
-        // The set of "you're busy" signals. Each mic signal detects one app's calls device-agnostically
-        // (works with virtual soundcards). Teams is the only one enabled today — add e.g.
-        // MicrophoneInUseSignal.Zoom() here and the rest of the app (status updates, tray state) follows
-        // automatically; list order sets precedence when more than one is active.
-        _coordinator = new SignalCoordinator(new IStatusSignal[] { MicrophoneInUseSignal.Teams() });
+        // The "you're busy" signal: a single mic monitor that fires when any app the user configured on
+        // the Detection page is capturing the microphone. Device-agnostic (works with virtual
+        // soundcards). The IStatusSignal seam lets future signals (screen-lock, calendar) be added here.
+        _mic = new MicrophoneInUseSignal { TrackingEnabled = _config.TrackMicUsage };
+        _mic.UpdateMatchers(_config.DetectionProducts);
+        _coordinator = new SignalCoordinator(new IStatusSignal[] { _mic });
         _coordinator.ActiveChanged += OnActiveChanged;
 
         // ── Context menu ──────────────────────────────────────────────────────
@@ -181,7 +183,7 @@ class TrayApp : IDisposable
         // Shown modeless (no owner) so it's a free-standing top-level window we can move between
         // virtual desktops. It edits the live config and persists each change itself, calling back
         // here so the tray reflects edits as they happen — there's no Save/Cancel round-trip.
-        var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze, CheckForUpdates);
+        var form = new SettingsWindow(_config, OnSettingsChanged, Snooze, ClearSnooze, CheckForUpdates, _mic);
         _settingsForm = form;
         form.FormClosed += (_, _) => { form.Dispose(); _settingsForm = null; };
         form.Show();
@@ -211,6 +213,11 @@ class TrayApp : IDisposable
 
     void OnSettingsChanged()
     {
+        // Detection edits (products, enable toggles, tracking) must reach the live signal — push them
+        // before re-evaluating so a matcher change takes effect immediately.
+        _mic.TrackingEnabled = _config.TrackMicUsage;
+        _mic.UpdateMatchers(_config.DetectionProducts);
+
         ReevaluateStatus();   // a new status text/emoji or a fresh/dropped connection may change what's shown
         RefreshUI();
     }

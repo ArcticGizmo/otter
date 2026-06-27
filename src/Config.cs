@@ -40,10 +40,27 @@ class Config
     // one-time re-save to migrate the file to encrypted form. Never serialized.
     [JsonIgnore] bool _needsResave;
 
-    public string StatusText      { get; set; } = "In a Teams call";
+    public string StatusText      { get; set; } = "In a call";
     public string StatusEmoji     { get; set; } = ":headphones:";
     public bool   Enabled         { get; set; } = true;
     public DateTime? SnoozedUntil { get; set; }
+
+    // The apps Otter watches for. Detection fires when any *enabled* product's match terms appear in a
+    // capturing app's identifier (see MicrophoneInUseSignal). Seeded with sensible defaults; the
+    // initializer fills these in for config files written before the feature existed, while an empty
+    // list the user trimmed themselves is respected (no re-seed).
+    public List<DetectionProduct> DetectionProducts { get; set; } = DefaultProducts();
+
+    // When on, MicrophoneInUseSignal keeps an in-memory log of recently capturing apps so the Detection
+    // page can surface apps that aren't matching yet. Purely a discovery aid; no effect on detection.
+    public bool TrackMicUsage { get; set; }
+
+    static List<DetectionProduct> DefaultProducts() => new()
+    {
+        new() { Name = "Microsoft Teams", Match = "teams",   Enabled = true },
+        new() { Name = "Zoom",            Match = "zoom",    Enabled = true },
+        new() { Name = "Discord",         Match = "discord", Enabled = true },
+    };
 
     [JsonIgnore]
     public bool IsSnoozed => SnoozedUntil is { } until && until > DateTime.UtcNow;
@@ -78,4 +95,22 @@ class Config
         Directory.CreateDirectory(ConfigDir);
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, JsonOpts));
     }
+}
+
+/// <summary>
+/// One app Otter watches for. <see cref="Match"/> is a comma-separated list of case-insensitive
+/// substrings; detection fires when any of them appears in a capturing app's identifier (its exe
+/// filename or package family name — see <see cref="MicrophoneInUseSignal"/>). User-editable on the
+/// Detection settings page, so new apps can be added without a rebuild.
+/// </summary>
+class DetectionProduct
+{
+    public string Name    { get; set; } = "";
+    public string Match   { get; set; } = "";
+    public bool   Enabled { get; set; } = true;
+
+    /// <summary>The <see cref="Match"/> string split into individual, trimmed, non-empty terms.</summary>
+    [JsonIgnore]
+    public IEnumerable<string> Terms =>
+        Match.Split(',').Select(t => t.Trim()).Where(t => t.Length > 0);
 }

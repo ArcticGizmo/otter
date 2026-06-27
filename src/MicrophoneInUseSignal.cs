@@ -2,10 +2,31 @@ using Microsoft.Win32;
 
 namespace Otter;
 
+/// <summary>One app observed capturing the microphone, identified by its exe filename (unpackaged) or
+/// package family name (packaged). The <see cref="Identifier"/> is what match terms are tested against
+/// and what the Detection page's "quick add" turns into a new matcher.</summary>
+record MicCapture(string Identifier);
+
 /// <summary>
-/// Fires while a configured app is actively capturing the microphone — Otter's signal that you're on a
-/// call. Construct one per app (see <see cref="Teams"/> / <see cref="Zoom"/>); the order they're
-/// registered with <see cref="SignalCoordinator"/> sets precedence.
+/// The microphone-usage discovery feed exposed by <see cref="MicrophoneInUseSignal"/>. When
+/// <see cref="TrackingEnabled"/> is on it keeps a rolling list of the most recent apps seen capturing
+/// the mic, so the Detection settings page can surface apps that aren't matching yet.
+/// </summary>
+interface IMicUsageFeed
+{
+    bool TrackingEnabled { get; set; }
+
+    /// <summary>Most-recent-first, distinct by identifier, capped at <see cref="MicrophoneInUseSignal.LogCapacity"/>.</summary>
+    IReadOnlyList<MicCapture> RecentCaptures { get; }
+
+    /// <summary>Raised (possibly off the UI thread) when <see cref="RecentCaptures"/> changes.</summary>
+    event Action? CapturesChanged;
+}
+
+/// <summary>
+/// Fires while any configured app is actively capturing the microphone — Otter's signal that you're on
+/// a call. Driven by the user's <see cref="DetectionProduct"/> list: an app counts as a match when any
+/// enabled product's term is a case-insensitive substring of the app's identifier.
 ///
 /// Reads Windows' CapabilityAccessManager (the record behind the "🎤 in use" privacy indicator), which
 /// tracks microphone use per *app capability* rather than per audio device. That makes detection
@@ -13,17 +34,19 @@ namespace Otter;
 /// which the older WASAPI capture-session approach couldn't see through — no longer break it. An app is
 /// capturing right now iff its <c>LastUsedTimeStop</c> is 0 (started, not yet stopped).
 /// </summary>
-sealed class MicrophoneInUseSignal : IStatusSignal
+sealed class MicrophoneInUseSignal : IStatusSignal, IMicUsageFeed
 {
-    public string Name              { get; }
-    public string ActiveDescription { get; }
+    public const int LogCapacity = 20;
 
-    // What this signal counts as "its app" in the mic ConsentStore — see IsAppKey for the two key forms.
-    readonly string[] _packagePrefixes;
-    readonly string[] _exeNames;
+    public string Name              => "Call";
+    public string ActiveDescription => "On a call";
 
     public bool IsActive { get; private set; }
     public event Action? Changed;
+
+    // Discovery feed.
+    public bool TrackingEnabled { get; set; }
+    public event Action? CapturesChanged;
 
     const string KeyPath =
         @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
@@ -31,30 +54,36 @@ sealed class MicrophoneInUseSignal : IStatusSignal
     readonly CancellationTokenSource _cts = new();
     Task? _task;
 
-    /// <param name="exeNames">Exe filenames for unpackaged installs, e.g. "Zoom.exe".</param>
-    /// <param name="packagePrefixes">PackageFamilyName prefixes for Store/MSIX apps, e.g. "MSTeams_".</param>
-    public MicrophoneInUseSignal(
-        string name,
-        string activeDescription,
-        IEnumerable<string> exeNames,
-        IEnumerable<string>? packagePrefixes = null)
+    // Enabled match terms, lower-cased. Swapped wholesale by UpdateMatchers; read on the poll thread.
+    volatile string[] _terms = Array.Empty<string>();
+
+    // Identifiers seen capturing on the previous poll — lets us treat a not-capturing→capturing
+    // transition as a fresh "capture start" for the discovery log. Touched only on the poll thread.
+    HashSet<string> _prevCapturing = new(StringComparer.OrdinalIgnoreCase);
+
+    // The rolling discovery log, most-recent-first. Guarded by _logLock (poll thread writes, UI reads).
+    readonly object _logLock = new();
+    readonly List<MicCapture> _log = new();
+
+    /// <summary>
+    /// Replaces the active matcher set from the current detection config. The volatile swap is the only
+    /// state touched, so this is safe to call from any thread; the next poll (≤5s) picks up the change
+    /// and fires <see cref="Changed"/> if it flips detection. We deliberately don't re-poll here —
+    /// doing so from the UI thread would race the poll thread, and at construction time (before the
+    /// coordinator subscribes) the first transition would be lost.
+    /// </summary>
+    public void UpdateMatchers(IEnumerable<DetectionProduct> products) =>
+        _terms = products
+            .Where(p => p.Enabled)
+            .SelectMany(p => p.Terms)
+            .Select(t => t.ToLowerInvariant())
+            .Distinct()
+            .ToArray();
+
+    public IReadOnlyList<MicCapture> RecentCaptures
     {
-        Name              = name;
-        ActiveDescription = activeDescription;
-        _exeNames         = exeNames.ToArray();
-        _packagePrefixes  = packagePrefixes?.ToArray() ?? Array.Empty<string>();
+        get { lock (_logLock) return _log.ToArray(); }
     }
-
-    /// <summary>Microsoft Teams — packaged "new Teams" plus the classic unpackaged client.</summary>
-    public static MicrophoneInUseSignal Teams() => new(
-        "Teams call", "On a Teams call",
-        exeNames:        new[] { "Teams.exe", "ms-teams.exe" },
-        packagePrefixes: new[] { "MSTeams_" });
-
-    /// <summary>Zoom desktop client.</summary>
-    public static MicrophoneInUseSignal Zoom() => new(
-        "Zoom call", "On a Zoom call",
-        exeNames: new[] { "Zoom.exe" });
 
     public void Start()
     {
@@ -73,50 +102,94 @@ sealed class MicrophoneInUseSignal : IStatusSignal
 
     void Poll()
     {
-        bool active = AnyAppCapturing();
-        if (active == IsActive) return;
-        IsActive = active;
-        Changed?.Invoke();
-    }
+        var capturing = EnumerateCapturing();
 
-    bool AnyAppCapturing()
-    {
-        using var root = Registry.CurrentUser.OpenSubKey(KeyPath);
-        return root != null && Scan(root, underApp: false);
-    }
-
-    // The mic ConsentStore is keyed differently per app kind: packaged apps (e.g. new Teams) appear as a
-    // subkey named for their PackageFamilyName ("MSTeams_8wekyb3d8bbwe"); unpackaged apps (classic Teams,
-    // Zoom) live under "NonPackaged" keyed by an encoded exe path ending in the exe name. Values may sit
-    // on that key or a child, so once we're under one of our app's keys we check every descendant.
-    bool Scan(RegistryKey key, bool underApp)
-    {
-        if (underApp && IsCapturing(key)) return true;
-
-        foreach (var name in key.GetSubKeyNames())
+        bool active = capturing.Any(Matches);
+        if (active != IsActive)
         {
-            using var sub = key.OpenSubKey(name);
-            if (sub == null) continue;
-
-            if (Scan(sub, underApp || IsAppKey(name))) return true;
+            IsActive = active;
+            Changed?.Invoke();
         }
+
+        if (TrackingEnabled) UpdateLog(capturing);
+    }
+
+    bool Matches(string identifier)
+    {
+        var terms = _terms;   // volatile read once
+        if (terms.Length == 0) return false;
+        string id = identifier.ToLowerInvariant();
+        foreach (var t in terms)
+            if (id.Contains(t)) return true;
         return false;
     }
 
-    // Identifies a ConsentStore key belonging to this signal's app, matching the package name / exe
-    // filename precisely rather than by substring. A loose "contains" test would also fire for unrelated
-    // apps (e.g. "Teams" matching TeamSpeak), reporting a call that isn't happening.
-    bool IsAppKey(string name)
+    // Records a fresh capture (an app that wasn't capturing last poll) at the front of the log,
+    // de-duplicated by identifier and capped at LogCapacity. Runs on the poll thread.
+    void UpdateLog(List<string> capturing)
     {
-        // Packaged apps: key is the PackageFamilyName "<prefix><publisherHash>".
-        foreach (var prefix in _packagePrefixes)
-            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        var current = new HashSet<string>(capturing, StringComparer.OrdinalIgnoreCase);
+        var started = capturing.Where(id => !_prevCapturing.Contains(id)).ToList();
+        _prevCapturing = current;
+        if (started.Count == 0) return;
 
-        // NonPackaged keys encode the full path with '#' as the separator; the last segment is the exe.
-        string exe = name.Split('#')[^1];
-        foreach (var e in _exeNames)
-            if (exe.Equals(e, StringComparison.OrdinalIgnoreCase)) return true;
+        bool changed = false;
+        lock (_logLock)
+        {
+            foreach (var id in started)
+            {
+                _log.RemoveAll(c => string.Equals(c.Identifier, id, StringComparison.OrdinalIgnoreCase));
+                _log.Insert(0, new MicCapture(id));
+                changed = true;
+            }
+            if (_log.Count > LogCapacity) _log.RemoveRange(LogCapacity, _log.Count - LogCapacity);
+        }
+        if (changed) CapturesChanged?.Invoke();
+    }
 
+    // Every app currently holding a mic capture session, as a list of identifiers. The ConsentStore is
+    // keyed differently per app kind: packaged apps appear as a subkey named for their PackageFamilyName
+    // ("MSTeams_8wekyb3d8bbwe"); unpackaged apps live under "NonPackaged" keyed by an encoded exe path
+    // ("C:#Program Files#…#Zoom.exe"). The identifier we expose is the PFN for packaged apps and the exe
+    // filename (the last '#'-segment) for unpackaged ones.
+    static List<string> EnumerateCapturing()
+    {
+        var result = new List<string>();
+        using var root = Registry.CurrentUser.OpenSubKey(KeyPath);
+        if (root == null) return result;
+
+        foreach (var name in root.GetSubKeyNames())
+        {
+            using var sub = root.OpenSubKey(name);
+            if (sub == null) continue;
+
+            if (name.Equals("NonPackaged", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var appName in sub.GetSubKeyNames())
+                {
+                    using var app = sub.OpenSubKey(appName);
+                    if (app != null && AnyCapturing(app))
+                        result.Add(appName.Split('#')[^1]);   // exe filename
+                }
+            }
+            else if (AnyCapturing(sub))
+            {
+                result.Add(name);   // package family name
+            }
+        }
+        return result;
+    }
+
+    // True if this app key (or any descendant) holds an active capture session — values may sit on the
+    // app key itself or on a child.
+    static bool AnyCapturing(RegistryKey key)
+    {
+        if (IsCapturing(key)) return true;
+        foreach (var name in key.GetSubKeyNames())
+        {
+            using var sub = key.OpenSubKey(name);
+            if (sub != null && AnyCapturing(sub)) return true;
+        }
         return false;
     }
 

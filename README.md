@@ -3,7 +3,7 @@
  <img src="./src/icon.png" width="150" />
 </p>
 
-## Never forget to update your Slack status again
+## Hands-off Slack status for your calls
 
 You hop on a Teams call. Someone messages you on Slack expecting a quick reply, not realising you're heads-down in a meeting. You forget to set your status — every time.
 
