@@ -495,11 +495,11 @@ class SettingsWindow : Form
         page.Controls.Add(Ui.Separator(_fluid));
 
         _trackToggle = Ui.MakeToggle();
-        _trackToggle.Checked = _config.TrackMicUsage;   // set before wiring so this doesn't fire a commit
+        _trackToggle.Checked = _feed.TrackingEnabled;   // reflect the live (in-memory) state; set before wiring
         _trackToggle.CheckedChanged += (_, _) =>
         {
-            _config.TrackMicUsage = _trackToggle.Checked;
-            Commit();             // OnSettingsChanged pushes TrackingEnabled to the live signal
+            // Transient discovery aid — write straight to the signal, never to config.
+            _feed.TrackingEnabled = _trackToggle.Checked;
             RefreshMicLog();
         };
         page.Controls.Add(Ui.TitleRow(_fluid, "Track mic usage", _trackToggle));
@@ -596,7 +596,7 @@ class SettingsWindow : Form
         foreach (Control c in _micLog.Controls) c.Dispose();
         _micLog.Controls.Clear();
 
-        if (!_config.TrackMicUsage)
+        if (!_feed.TrackingEnabled)
             _micLog.Controls.Add(Ui.FieldCaption("Turn on to start logging microphone usage."));
         else
         {

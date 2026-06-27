@@ -51,9 +51,8 @@ class Config
     // list the user trimmed themselves is respected (no re-seed).
     public List<DetectionProduct> DetectionProducts { get; set; } = DefaultProducts();
 
-    // When on, MicrophoneInUseSignal keeps an in-memory log of recently capturing apps so the Detection
-    // page can surface apps that aren't matching yet. Purely a discovery aid; no effect on detection.
-    public bool TrackMicUsage { get; set; }
+    // Note: "track mic usage" is deliberately NOT persisted — it's a transient discovery aid held in
+    // MicrophoneInUseSignal.TrackingEnabled and reset every launch.
 
     static List<DetectionProduct> DefaultProducts() => new()
     {

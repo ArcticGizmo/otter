@@ -40,7 +40,9 @@ class TrayApp : IDisposable
         // The "you're busy" signal: a single mic monitor that fires when any app the user configured on
         // the Detection page is capturing the microphone. Device-agnostic (works with virtual
         // soundcards). The IStatusSignal seam lets future signals (screen-lock, calendar) be added here.
-        _mic = new MicrophoneInUseSignal { TrackingEnabled = _config.TrackMicUsage };
+        // TrackingEnabled is intentionally left at its default (off) — mic-usage tracking is a transient
+        // discovery aid that resets each launch, so it's never read from config.
+        _mic = new MicrophoneInUseSignal();
         _mic.UpdateMatchers(_config.DetectionProducts);
         _coordinator = new SignalCoordinator(new IStatusSignal[] { _mic });
         _coordinator.ActiveChanged += OnActiveChanged;
@@ -213,9 +215,9 @@ class TrayApp : IDisposable
 
     void OnSettingsChanged()
     {
-        // Detection edits (products, enable toggles, tracking) must reach the live signal — push them
-        // before re-evaluating so a matcher change takes effect immediately.
-        _mic.TrackingEnabled = _config.TrackMicUsage;
+        // Detection edits (products, enable toggles) must reach the live signal — push them before
+        // re-evaluating so a matcher change takes effect immediately. (Mic-usage tracking is set on the
+        // signal directly by the settings toggle and isn't persisted, so it isn't pushed here.)
         _mic.UpdateMatchers(_config.DetectionProducts);
 
         ReevaluateStatus();   // a new status text/emoji or a fresh/dropped connection may change what's shown
