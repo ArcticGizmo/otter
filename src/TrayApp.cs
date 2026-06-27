@@ -36,10 +36,11 @@ class TrayApp : IDisposable
     {
         _config = Config.Load();
 
-        // The set of "you're busy" signals. The microphone signal detects Teams calls device-agnostically
-        // (works with virtual soundcards) and is the only one today; add more here and the rest of the app
-        // (status updates, tray state) follows automatically.
-        _coordinator = new SignalCoordinator(new IStatusSignal[] { new MicrophoneInUseSignal() });
+        // The set of "you're busy" signals. Each mic signal detects one app's calls device-agnostically
+        // (works with virtual soundcards). Teams is the only one enabled today — add e.g.
+        // MicrophoneInUseSignal.Zoom() here and the rest of the app (status updates, tray state) follows
+        // automatically; list order sets precedence when more than one is active.
+        _coordinator = new SignalCoordinator(new IStatusSignal[] { MicrophoneInUseSignal.Teams() });
         _coordinator.ActiveChanged += OnActiveChanged;
 
         // ── Context menu ──────────────────────────────────────────────────────

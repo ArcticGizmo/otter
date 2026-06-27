@@ -3,19 +3,24 @@ using Microsoft.Win32;
 namespace Otter;
 
 /// <summary>
-/// Fires while Microsoft Teams is actively capturing the microphone — Otter's signal that you're on a
-/// Teams call.
+/// Fires while a configured app is actively capturing the microphone — Otter's signal that you're on a
+/// call. Construct one per app (see <see cref="Teams"/> / <see cref="Zoom"/>); the order they're
+/// registered with <see cref="SignalCoordinator"/> sets precedence.
 ///
 /// Reads Windows' CapabilityAccessManager (the record behind the "🎤 in use" privacy indicator), which
 /// tracks microphone use per *app capability* rather than per audio device. That makes detection
-/// independent of which input device Teams uses, so virtual soundcards (e.g. SteelSeries Sonar) — which
-/// the older WASAPI capture-session approach couldn't see through — no longer break it. An app is
+/// independent of which input device the app uses, so virtual soundcards (e.g. SteelSeries Sonar) —
+/// which the older WASAPI capture-session approach couldn't see through — no longer break it. An app is
 /// capturing right now iff its <c>LastUsedTimeStop</c> is 0 (started, not yet stopped).
 /// </summary>
 sealed class MicrophoneInUseSignal : IStatusSignal
 {
-    public string Name              => "Teams call";
-    public string ActiveDescription => "On a Teams call";
+    public string Name              { get; }
+    public string ActiveDescription { get; }
+
+    // What this signal counts as "its app" in the mic ConsentStore — see IsAppKey for the two key forms.
+    readonly string[] _packagePrefixes;
+    readonly string[] _exeNames;
 
     public bool IsActive { get; private set; }
     public event Action? Changed;
@@ -25,6 +30,31 @@ sealed class MicrophoneInUseSignal : IStatusSignal
 
     readonly CancellationTokenSource _cts = new();
     Task? _task;
+
+    /// <param name="exeNames">Exe filenames for unpackaged installs, e.g. "Zoom.exe".</param>
+    /// <param name="packagePrefixes">PackageFamilyName prefixes for Store/MSIX apps, e.g. "MSTeams_".</param>
+    public MicrophoneInUseSignal(
+        string name,
+        string activeDescription,
+        IEnumerable<string> exeNames,
+        IEnumerable<string>? packagePrefixes = null)
+    {
+        Name              = name;
+        ActiveDescription = activeDescription;
+        _exeNames         = exeNames.ToArray();
+        _packagePrefixes  = packagePrefixes?.ToArray() ?? Array.Empty<string>();
+    }
+
+    /// <summary>Microsoft Teams — packaged "new Teams" plus the classic unpackaged client.</summary>
+    public static MicrophoneInUseSignal Teams() => new(
+        "Teams call", "On a Teams call",
+        exeNames:        new[] { "Teams.exe", "ms-teams.exe" },
+        packagePrefixes: new[] { "MSTeams_" });
+
+    /// <summary>Zoom desktop client.</summary>
+    public static MicrophoneInUseSignal Zoom() => new(
+        "Zoom call", "On a Zoom call",
+        exeNames: new[] { "Zoom.exe" });
 
     public void Start()
     {
@@ -43,48 +73,51 @@ sealed class MicrophoneInUseSignal : IStatusSignal
 
     void Poll()
     {
-        bool active = AnyTeamsCapturing();
+        bool active = AnyAppCapturing();
         if (active == IsActive) return;
         IsActive = active;
         Changed?.Invoke();
     }
 
-    static bool AnyTeamsCapturing()
+    bool AnyAppCapturing()
     {
         using var root = Registry.CurrentUser.OpenSubKey(KeyPath);
-        return root != null && Scan(root, underTeams: false);
+        return root != null && Scan(root, underApp: false);
     }
 
-    // The mic ConsentStore is keyed differently per app kind: packaged apps (new Teams) appear as a
-    // subkey named for their PackageFamilyName ("MSTeams_8wekyb3d8bbwe"); unpackaged apps (classic
-    // Teams) live under "NonPackaged" keyed by an encoded exe path ending in "Teams.exe". Values may
-    // sit on that key or a child, so once we're under a Teams-named ancestor we check every descendant.
-    static bool Scan(RegistryKey key, bool underTeams)
+    // The mic ConsentStore is keyed differently per app kind: packaged apps (e.g. new Teams) appear as a
+    // subkey named for their PackageFamilyName ("MSTeams_8wekyb3d8bbwe"); unpackaged apps (classic Teams,
+    // Zoom) live under "NonPackaged" keyed by an encoded exe path ending in the exe name. Values may sit
+    // on that key or a child, so once we're under one of our app's keys we check every descendant.
+    bool Scan(RegistryKey key, bool underApp)
     {
-        if (underTeams && IsCapturing(key)) return true;
+        if (underApp && IsCapturing(key)) return true;
 
         foreach (var name in key.GetSubKeyNames())
         {
             using var sub = key.OpenSubKey(name);
             if (sub == null) continue;
 
-            if (Scan(sub, underTeams || IsTeamsKey(name))) return true;
+            if (Scan(sub, underApp || IsAppKey(name))) return true;
         }
         return false;
     }
 
-    // Identifies the ConsentStore key for a Teams app, matching the package name / exe filename
-    // precisely rather than by substring. A loose "contains teams" test would also fire for unrelated
-    // apps such as TeamSpeak ("…#TeamSpeak.exe"), reporting a Teams call that isn't happening.
-    static bool IsTeamsKey(string name)
+    // Identifies a ConsentStore key belonging to this signal's app, matching the package name / exe
+    // filename precisely rather than by substring. A loose "contains" test would also fire for unrelated
+    // apps (e.g. "Teams" matching TeamSpeak), reporting a call that isn't happening.
+    bool IsAppKey(string name)
     {
-        // Packaged "new Teams": PackageFamilyName "MSTeams_<publisherHash>".
-        if (name.StartsWith("MSTeams_", StringComparison.OrdinalIgnoreCase)) return true;
+        // Packaged apps: key is the PackageFamilyName "<prefix><publisherHash>".
+        foreach (var prefix in _packagePrefixes)
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
 
         // NonPackaged keys encode the full path with '#' as the separator; the last segment is the exe.
         string exe = name.Split('#')[^1];
-        return exe.Equals("Teams.exe",    StringComparison.OrdinalIgnoreCase)   // classic Teams
-            || exe.Equals("ms-teams.exe", StringComparison.OrdinalIgnoreCase);  // new Teams (unpackaged launch)
+        foreach (var e in _exeNames)
+            if (exe.Equals(e, StringComparison.OrdinalIgnoreCase)) return true;
+
+        return false;
     }
 
     // In use ⇔ a capture session was started (Start > 0) and not yet stopped (Stop == 0). Both values
